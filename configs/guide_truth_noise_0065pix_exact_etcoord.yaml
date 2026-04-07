@@ -1,0 +1,45 @@
+project:
+  name: fsglib_guide_truth_noise_0065pix_exact_etcoord
+
+guide_truth_noise:
+  dataset_root: /home/cxgao/ET/FSG_guide_sims/guide_det_v1_noise_psf_6s
+  frame_index: 0
+  max_observed_per_detector: 100
+  body_model_fit_grid_size: 13
+  body_model_initial_f_mm: 428.0
+  catalog_g_mag_max: 12.5
+  reference_topk_per_detector: 260
+  target_epoch: 2000.0
+  centroid_noise_mean_pix: 0.0
+  centroid_noise_sigma_pix: 0.065
+  centroid_noise_space: detector_pixel
+  random_seed: 20260326
+  los_geometry_mode: exact_et_focalplane
+  detector_batches:
+    - detector_id: guide_left
+      batch_name: batch0_ra278.1844_dec37.5704
+    - detector_id: guide_top
+      batch_name: batch1_ra269.5821_dec57.8997
+    - detector_id: guide_right
+      batch_name: batch2_ra310.6239_dec59.2676
+    - detector_id: guide_bottom
+      batch_name: batch3_ra305.0356_dec38.4755
+
+et_coord:
+  src_dir: /home/cxgao/ET/et_focalplane/src
+  data_dir: /home/cxgao/ET/et_focalplane/data
+  gaia_root_dir: /home/cxgao/gaia_dr3_19mag
+
+match:
+  algorithm: local_triangle
+  validate_max_residual_pix: 10.0
+  validate_min_support: 5
+
+attitude:
+  outlier_reject_enable: true
+  outlier_max_residual_arcsec: 30.0
+
+evaluation:
+  guide_error_audit:
+    enabled: true
+    truth_match_radius_pix: 3.0

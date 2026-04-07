@@ -1,0 +1,31 @@
+# Bias correction is resolved automatically from the active PSF model key.
+# Here we intentionally ignore which detector/noise/jitter effects are enabled and
+# only bind a table to the PSF model itself. If the PSF model changes, switch the
+# active_model_key or register another table below.
+
+psf:
+  active_model_key: photsim6ft_d280_focus_field12
+
+extract:
+  bias_correction:
+    enabled: true
+    profile: null
+    psf_model_key: null
+    calibration_key: fsg
+    auto_resolve_psf_model: true
+    strict_centroid_check: true
+    idw_k: 12
+    idw_power: 2.0
+    store_debug_bias: true
+
+bias_profiles:
+  by_psf_model:
+    photsim6ft_d280_focus_field12:
+      description: >
+        Bias map calibrated from Photosim6ft for the segmentation-mask weighted centroid
+        used by fsglib, bound only to the PSF model key below.
+      psf_bundle_name: 241006/D280mm-focus
+      psf_field_angle_deg: 12.0
+      centroid_method: weighted_centroid
+      calibration_key: fsg
+      bias_table_path: configs/bias_profiles/photsim6ft_d280_focus_field12_purepsf_31pix.json

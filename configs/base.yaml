@@ -1,0 +1,137 @@
+project:
+  name: fsglib
+  mode: init
+  save_debug: true
+  output_dir: outputs/debug
+
+io:
+  npz_image_key: images
+  npz_time_key: time_s
+  npz_variant_key: variant_ids
+  npz_cadence_key: cadence_s
+  npz_unit_key: unit
+
+dataset:
+  truth_origin: centered_pixels
+  truth_y_axis_up: false
+
+detector:
+  num_detectors: 4
+  image_height: 1119
+  image_width: 1119
+  pixel_size_um: null
+  saturation_value: null
+  bad_pixel_map: null
+
+psf:
+  active_model_key: null
+
+preprocess:
+  enable_bias_subtraction: false
+  enable_dark_subtraction: false
+  enable_flat_field: false
+  enable_bad_pixel_mask: false
+  enable_background_subtraction: true
+  background_method: sigma_clip_global
+  sigma_clip_k: 3.0
+  denoise_method: none
+
+extract:
+  detection_image: snr
+  seed_threshold_sigma: 5.0
+  grow_threshold_sigma: 3.0
+  min_area: 3
+  max_area: 200
+  centroid_method: weighted_centroid
+  centroid_window:
+    center: peak
+    size: 31
+  bbox_expand: 2
+  reject_edge_margin: 3
+  max_ellipticity: 0.8
+  bias_correction:
+    enabled: false
+    profile: null
+    psf_model_key: null
+    calibration_key: fsg
+    auto_resolve_psf_model: true
+    strict_centroid_check: true
+    idw_k: 12
+    idw_power: 2.0
+    store_debug_bias: true
+
+bias_profiles:
+  profiles: {}
+  by_psf_model: {}
+
+match:
+  algorithm: "local_triangle"
+  triangle_tolerance_deg: 0.005
+  triangle_max_stars: 15
+  triangle_gsc_path: "/home/cxgao/ET/FSG/fsglib/data/catalogs/gsc_8mag.npz"
+  mode: init
+  init_max_catalog_radius_deg: 1.5
+  init_bright_star_topk: 20
+  pair_angle_tol_arcsec: 120.0
+  hypothesis_topk: 50
+  validate_max_residual_arcsec: 60.0
+  validate_max_residual_pix: 25.0
+  validate_min_support: 5
+
+tracking:
+  search_radius_pix: 10.0
+  max_miss_count: 3
+  reacquire_after_failures: 2
+  lost_after_init_failures: 3
+  max_attitude_jump_arcsec: 300.0
+
+ephemeris:
+  catalog_backend: "healpix"
+  gaia_root_dir: "/home/cxgao/gaia_dr3_19mag"
+  mag_limit: 15.0
+  tracking_catalog_radius_deg: 2.0
+  reference_selection_mode: "visible_only"
+  reference_topk: 0
+  gaia_to_kp_poly_path: "/home/cxgao/ET/Photosim6/data/misc/gaia2kp_mag_pfc.npy"
+  enable_proper_motion: true
+  enable_precession: false
+  enable_nutation: false
+  enable_dva: false
+  enable_relativity: false
+
+attitude:
+  solver: quest
+  min_stars_mathematical: 2
+  min_stars_operational: 4
+  weight_mode: variance_snr_hybrid
+  outlier_reject_enable: true
+  outlier_max_residual_arcsec: 30.0
+  outlier_sigma_clip: 3.0
+  max_iterations: 2
+
+metrics:
+  enable_truth_compare: true
+  report_centroid_error: true
+  report_attitude_error: true
+  report_runtime: true
+
+evaluation:
+  batch_glob: "batch*"
+  frame_stride: 1
+  max_frames_per_batch: null
+  centroid_step_audit:
+    enabled: false
+    stamp_size: 31
+    truth_match_radius_pix: 3.0
+    max_stars: null
+    ft_root: "/home/cxgao/ET/Photosim6ft"
+    data_dir: "/home/cxgao/ET/Photosim6/data"
+    config_xlsx: "/home/cxgao/ET/Photosim6ft/et_100_det_inputs_1h.xlsx"
+    psf_field_id: 6
+    mag_type: "ET"
+
+logging:
+  level: INFO
+  save_intermediate_arrays: true
+  save_source_catalog: true
+  save_match_result: true
