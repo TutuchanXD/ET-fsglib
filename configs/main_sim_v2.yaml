@@ -1,0 +1,20 @@
+layout:
+  frame_name: fgs_body
+  projection_model: sky_patch_linearized
+  default_detector_id: 0
+  detectors:
+    - detector_id: 0
+      name: "main_sim_v2"
+      active: true
+      resolution: [1119, 1119]
+      principal_point_pix: [559.0, 559.0]
+      pixel_scale_arcsec_per_pix: 4.83
+      visibility_margin_pix: 0.5
+      mounting_matrix:
+        - [1.0, 0.0, 0.0]
+        - [0.0, 1.0, 0.0]
+        - [0.0, 0.0, 1.0]
+
+ephemeris:
+  reference_selection_mode: "sim_rect_topk"
+  reference_topk: 200

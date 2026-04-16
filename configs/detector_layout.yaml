@@ -1,0 +1,120 @@
+# fsglib Detector Layout Configuration
+# Defines the physical mounting and geometric parameters of the detectors.
+
+layout:
+  frame_name: fgs_body
+  # The physical size of a single pixel in mm (assumes square pixels)
+  pixel_size_mm: 0.0065
+  
+  # Field distortion polynomial coefficients (u = a1*x + a3*x^3 + axy2*x*y^2)
+  distortion:
+    a1: 0.134636212
+    a3: -3.1445e-7
+    axy2: -8.5532e-8
+
+  detectors:
+    # -----------------------------------------------------------------
+    # Main Detectors
+    # -----------------------------------------------------------------
+    - detector_id: 0
+      name: "main_ul"
+      active: true
+      # Based on the user provided corners, roughly 92.95 / 0.0065 pixels
+      resolution: [14300, 14300]
+      principal_point_pix: [7150.0, 7150.0]
+      # Ideal mounting assumes normal pointing to boresight
+      mounting_matrix: [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0]
+      ]
+      fov_center_mm: [-45.6, 46.4]
+    
+    - detector_id: 1
+      name: "main_ur"
+      active: true
+      resolution: [14300, 14300]
+      principal_point_pix: [7150.0, 7150.0]
+      mounting_matrix: [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0]
+      ]
+      fov_center_mm: [46.4, 47.3]
+
+    - detector_id: 2
+      name: "main_lr"
+      active: true
+      resolution: [14300, 14300]
+      principal_point_pix: [7150.0, 7150.0]
+      mounting_matrix: [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0]
+      ]
+      fov_center_mm: [47.3, -46.4]
+
+    - detector_id: 3
+      name: "main_ll"
+      active: true
+      resolution: [14300, 14300]
+      principal_point_pix: [7150.0, 7150.0]
+      mounting_matrix: [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0]
+      ]
+      fov_center_mm: [-46.4, -47.3]
+
+    # -----------------------------------------------------------------
+    # Guiding Detectors
+    # -----------------------------------------------------------------
+    - detector_id: 4
+      name: "guide_ul"
+      active: true
+      # Field edges: "x": (-40.66, -27.34), "y": (102.91, 116.22)
+      # Size in mm: 13.32 x 13.31 mm -> /0.0065 = 2049 x 2047
+      resolution: [2048, 2048]
+      principal_point_pix: [1024.0, 1024.0]
+      fov_center_mm: [-34.0, 109.565]
+      mounting_matrix: [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0]
+      ]
+
+    - detector_id: 5
+      name: "guide_ur"
+      active: true
+      resolution: [2048, 2048]
+      principal_point_pix: [1024.0, 1024.0]
+      fov_center_mm: [109.565, 34.0]
+      mounting_matrix: [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0]
+      ]
+
+    - detector_id: 6
+      name: "guide_lr"
+      active: true
+      resolution: [2048, 2048]
+      principal_point_pix: [1024.0, 1024.0]
+      fov_center_mm: [34.0, -109.565]
+      mounting_matrix: [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0]
+      ]
+
+    - detector_id: 7
+      name: "guide_ll"
+      active: true
+      resolution: [2048, 2048]
+      principal_point_pix: [1024.0, 1024.0]
+      fov_center_mm: [-109.565, -34.0]
+      mounting_matrix: [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0]
+      ]
