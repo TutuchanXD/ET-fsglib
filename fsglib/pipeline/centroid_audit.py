@@ -58,8 +58,16 @@ def _prepare_photsim6_alias(ft_root: Path, data_dir: Path) -> None:
         if module_name == "photsim6" or module_name.startswith("photsim6."):
             sys.modules.pop(module_name)
 
+    source_candidates = [ft_root / "photsim7", ft_root / "photsim6ft"]
+    source_dir = next((path for path in source_candidates if path.exists()), None)
+    if source_dir is None:
+        raise FileNotFoundError(
+            "Could not find a Photosim source package under "
+            f"{ft_root}; checked {source_candidates}"
+        )
+
     photsim6_alias_pkg = types.ModuleType("photsim6")
-    photsim6_alias_pkg.__path__ = [str(ft_root / "photsim6ft")]
+    photsim6_alias_pkg.__path__ = [str(source_dir)]
     photsim6_alias_pkg.__package__ = "photsim6"
     sys.modules["photsim6"] = photsim6_alias_pkg
     os.environ["ET_DATA_DIR"] = str(data_dir)
