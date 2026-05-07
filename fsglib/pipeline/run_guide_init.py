@@ -26,9 +26,14 @@ def _load_et_coord(cfg: dict) -> tuple[Any, Any, Any, Any]:
     if str(src_dir) not in sys.path:
         sys.path.insert(0, str(src_dir))
 
-    from et_coord import GaiaCatalog, GaiaSourceFilter, Transformer, load_registry
+    from et_coord import ETCoordConfig, GaiaCatalog, GaiaSourceFilter, Transformer, load_registry
 
-    registry = load_registry(Path(et_cfg["data_dir"]).expanduser().resolve())
+    data_dir = Path(et_cfg["data_dir"]).expanduser().resolve()
+    config_factory = et_cfg.get("config_factory")
+    if config_factory is None:
+        registry = load_registry(data_dir)
+    else:
+        registry = load_registry(data_dir, getattr(ETCoordConfig, str(config_factory))())
     transformer = Transformer(registry)
     catalog = GaiaCatalog(Path(et_cfg["gaia_root_dir"]).expanduser().resolve())
     return registry, transformer, catalog, GaiaSourceFilter
