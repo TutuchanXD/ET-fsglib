@@ -1,0 +1,47 @@
+project:
+  name: fsglib_microlens_guide_v1_noise_psf
+
+guide_init:
+  dataset_root: /home/cxgao/ET/FSG_guide_sims/microlens_guide_photsim7_6s
+  frame_index: 0
+  max_observed_per_detector: 100
+  los_geometry_mode: exact_et_focalplane
+  body_model_fit_grid_size: 13
+  body_model_initial_f_mm: 5150.0
+  catalog_g_mag_max: 16.0
+  reference_topk_per_detector: 260
+  target_epoch: 2000.0
+  detector_batches:
+    - detector_id: guide_top
+      batch_name: batch0_guide_top_ra269.0166_dec-28.1059
+    - detector_id: guide_left
+      batch_name: batch1_guide_left_ra267.6978_dec-29.4943
+    - detector_id: guide_bottom
+      batch_name: batch2_guide_bottom_ra269.3037_dec-30.6484
+    - detector_id: guide_right
+      batch_name: batch3_guide_right_ra270.6153_dec-29.2442
+
+detector:
+  image_height: 2049
+  image_width: 2049
+  pixel_size_um: 6.5
+
+et_coord:
+  src_dir: /home/cxgao/ET/et_focalplane/src
+  data_dir: /home/cxgao/ET/et_focalplane/data_microlens
+  config_factory: microlens_guide_only
+  gaia_root_dir: /home/cxgao/gaia_dr3_19mag
+
+match:
+  algorithm: local_triangle
+  validate_max_residual_pix: 10.0
+  validate_min_support: 5
+
+attitude:
+  outlier_reject_enable: true
+  outlier_max_residual_arcsec: 30.0
+
+evaluation:
+  guide_error_audit:
+    enabled: true
+    truth_match_radius_pix: 3.0
