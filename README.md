@@ -194,7 +194,10 @@ et_coord:
 ```
 
 The guide configs then limit the effective catalog depth, for example with
-`guide_init.catalog_g_mag_max`.
+`guide_init.catalog_g_mag_max`. They can also constrain the bright end with
+`guide_init.catalog_g_mag_min`, preselect a larger bright-star pool before
+final truncation with `guide_init.reference_preselect_topk_per_detector`, and
+discard crowded reference stars with `guide_init.reference_isolation_radius_pix`.
 
 ### Simulated guide frames
 
@@ -226,7 +229,10 @@ Payload-specific configs override only the fields that differ for a run:
 - `guide_init.dataset_root`
 - `guide_init.detector_batches`
 - `guide_init.body_model_initial_f_mm`
+- `guide_init.catalog_g_mag_min`
 - `guide_init.catalog_g_mag_max`
+- `guide_init.reference_preselect_topk_per_detector`
+- `guide_init.reference_isolation_radius_pix`
 - `detector.image_height`
 - `detector.image_width`
 - `detector.pixel_size_um`
