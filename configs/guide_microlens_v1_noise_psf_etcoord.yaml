@@ -2,7 +2,7 @@ project:
   name: fsglib_microlens_guide_v1_noise_psf
 
 guide_init:
-  dataset_root: /home/cxgao/ET/FSG_guide_sims/microlens_guide_photsim7_6s
+  dataset_root: /home/cxgao/Results/FSG_guide_sims_legacy_20260508/microlens_guide_photsim7_6s
   frame_index: 0
   max_observed_per_detector: 100
   los_geometry_mode: exact_et_focalplane

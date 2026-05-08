@@ -20,7 +20,7 @@ from fsglib.pipeline.evaluate import evaluate_dataset
 from fsglib.pipeline.run_init import run_single_frame_init
 
 
-DEFAULT_DATASET_ROOT = "/home/cxgao/ET/FSG_images_sims/v2"
+DEFAULT_DATASET_ROOT = "/home/cxgao/Results/FSG_images_sims_legacy_20260508/v2"
 DEFAULT_BASE_CFG = "/home/cxgao/ET/FSG/fsglib/configs/base.yaml"
 DEFAULT_DET_CFG = "/home/cxgao/ET/FSG/fsglib/configs/main_sim_v2.yaml"
 

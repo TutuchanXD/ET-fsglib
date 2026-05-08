@@ -2,7 +2,7 @@ project:
   name: fsglib_guide_truth_noise_0065pix_exact_etcoord
 
 guide_truth_noise:
-  dataset_root: /home/cxgao/ET/FSG_guide_sims/guide_det_v1_noise_psf_6s
+  dataset_root: /home/cxgao/Results/FSG_guide_sims_legacy_20260508/guide_det_v1_noise_psf_6s
   frame_index: 0
   max_observed_per_detector: 100
   body_model_fit_grid_size: 13

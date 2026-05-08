@@ -11,7 +11,7 @@
 - configs/main_sim_v2.yaml
 
 默认输入：
-- /home/cxgao/ET/FSG_images_sims/v2/batch0_ra304.0980_dec51.4330/frames/scope0_coadd_000000_000000.npz
+- /home/cxgao/Results/FSG_images_sims_legacy_20260508/v2/batch0_ra304.0980_dec51.4330/frames/scope0_coadd_000000_000000.npz
 """
 
 import sys
@@ -51,7 +51,7 @@ def main():
             cfg = _deep_update(cfg, cfg_extra)
 
     # Use one of the provided batch npz files
-    npz_path = "/home/cxgao/ET/FSG_images_sims/v2/batch0_ra304.0980_dec51.4330/frames/scope0_coadd_000000_000000.npz"
+    npz_path = "/home/cxgao/Results/FSG_images_sims_legacy_20260508/v2/batch0_ra304.0980_dec51.4330/frames/scope0_coadd_000000_000000.npz"
     if not Path(npz_path).exists():
         print(f"Error: NPZ file not found at {npz_path}")
         return

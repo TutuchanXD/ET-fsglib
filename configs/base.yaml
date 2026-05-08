@@ -93,7 +93,7 @@ ephemeris:
   tracking_catalog_radius_deg: 2.0
   reference_selection_mode: "visible_only"
   reference_topk: 0
-  gaia_to_kp_poly_path: "/home/cxgao/ET/Photosim6/data/misc/gaia2kp_mag_pfc.npy"
+  gaia_to_kp_poly_path: "/home/cxgao/ET/Photsim7-data/misc/gaia2kp_mag_pfc.npy"
   enable_proper_motion: true
   enable_precession: false
   enable_nutation: false
@@ -125,9 +125,9 @@ evaluation:
     stamp_size: 31
     truth_match_radius_pix: 3.0
     max_stars: null
-    ft_root: "/home/cxgao/ET/Photosim7"
-    data_dir: "/home/cxgao/ET/Photosim6/data"
-    config_xlsx: "/home/cxgao/ET/fsgsim/config/et_100_det_inputs_1h.xlsx"
+    ft_root: "/home/cxgao/ET/Photsim7"
+    data_dir: "/home/cxgao/ET/Photsim7-data"
+    config_xlsx: "/home/cxgao/ET/FSG/fsgsim/config/et_100_det_inputs_1h.xlsx"
     psf_field_id: 6
     mag_type: "ET"
 
