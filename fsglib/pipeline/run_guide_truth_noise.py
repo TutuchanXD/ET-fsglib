@@ -398,8 +398,13 @@ def run_guide_first_frame_truth_noise(cfg: dict) -> dict:
         matched_per_detector[key] = matched_per_detector.get(key, 0) + 1
 
     for detector_id, stats in detector_stats.items():
+        reference_detector_stats = reference_stats[detector_id]
         stats["num_matched"] = matched_per_detector.get(detector_id, 0)
-        stats["num_reference_stars"] = reference_stats[detector_id]["num_reference_stars"]
+        stats["num_reference_stars"] = reference_detector_stats["num_reference_stars"]
+        stats["num_reference_preselected"] = reference_detector_stats["num_reference_preselected"]
+        stats["num_reference_isolated"] = reference_detector_stats["num_reference_isolated"]
+        stats["reference_preselect_topk"] = reference_detector_stats["preselect_topk"]
+        stats["reference_isolation_radius_pix"] = reference_detector_stats["isolation_radius_pix"]
         stats["sim_to_detector_kind"] = sim_to_detector_map[detector_id]["kind"]
         stats["schema_version"] = sim_to_detector_map[detector_id]["schema_version"]
         if sim_to_detector_map[detector_id]["kind"] == "offset":
@@ -454,6 +459,22 @@ def run_guide_first_frame_truth_noise(cfg: dict) -> dict:
             "dataset_root": str(dataset_root),
             "frame_index": int(guide_cfg.get("frame_index", 0)),
             "reference_topk_per_detector": int(guide_cfg["reference_topk_per_detector"]),
+            "reference_preselect_topk_per_detector": int(
+                guide_cfg.get(
+                    "reference_preselect_topk_per_detector",
+                    guide_cfg["reference_topk_per_detector"],
+                )
+            ),
+            "reference_isolation_radius_pix": (
+                None
+                if guide_cfg.get("reference_isolation_radius_pix") is None
+                else float(guide_cfg["reference_isolation_radius_pix"])
+            ),
+            "catalog_g_mag_min": (
+                None
+                if guide_cfg.get("catalog_g_mag_min") is None
+                else float(guide_cfg["catalog_g_mag_min"])
+            ),
             "catalog_g_mag_max": float(guide_cfg["catalog_g_mag_max"]),
             "max_observed_per_detector": int(guide_cfg.get("max_observed_per_detector", 0)),
         },

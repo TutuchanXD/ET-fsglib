@@ -430,8 +430,15 @@ def _build_observed_stars(
 
 def _build_reference_stars(cfg: dict, registry, catalog, GaiaSourceFilter) -> tuple[list[ReferenceStar], dict]:
     guide_cfg = cfg["guide_init"]
+    g_mag_min = guide_cfg.get("catalog_g_mag_min")
+    if g_mag_min is not None:
+        g_mag_min = float(g_mag_min)
     g_mag_max = float(guide_cfg["catalog_g_mag_max"])
     topk = int(guide_cfg["reference_topk_per_detector"])
+    preselect_topk = int(guide_cfg.get("reference_preselect_topk_per_detector", topk))
+    isolation_radius_pix = guide_cfg.get("reference_isolation_radius_pix")
+    if isolation_radius_pix is not None:
+        isolation_radius_pix = float(isolation_radius_pix)
     target_epoch = float(guide_cfg.get("target_epoch", 2000.0))
 
     from et_coord import query_detector_sources
@@ -439,7 +446,10 @@ def _build_reference_stars(cfg: dict, registry, catalog, GaiaSourceFilter) -> tu
     reference: list[ReferenceStar] = []
     per_detector_stats: dict[str, dict] = {}
 
-    filters = GaiaSourceFilter(g_mean_mag_max=g_mag_max)
+    filter_kwargs = {"g_mean_mag_max": g_mag_max}
+    if g_mag_min is not None:
+        filter_kwargs["g_mean_mag_min"] = g_mag_min
+    filters = GaiaSourceFilter(**filter_kwargs)
     for entry in _guide_entries(cfg):
         detector_id = str(entry["detector_id"])
         frame = query_detector_sources(
@@ -450,11 +460,31 @@ def _build_reference_stars(cfg: dict, registry, catalog, GaiaSourceFilter) -> tu
             include_coords=("pixel",),
             target_epoch=target_epoch,
         )
-        frame = frame.sort_values("g_mean_mag", ascending=True).head(topk)
+        frame = frame.sort_values("g_mean_mag", ascending=True)
+        frame = frame.head(preselect_topk).copy()
+
+        num_preselected = int(len(frame))
+        num_isolated = num_preselected
+        if isolation_radius_pix is not None and isolation_radius_pix > 0.0 and num_preselected > 1:
+            coords = frame[["xpix", "ypix"]].to_numpy(dtype=np.float64)
+            dx = coords[:, 0][:, None] - coords[:, 0][None, :]
+            dy = coords[:, 1][:, None] - coords[:, 1][None, :]
+            dist2 = (dx * dx) + (dy * dy)
+            np.fill_diagonal(dist2, np.inf)
+            nearest_dist = np.sqrt(np.min(dist2, axis=1))
+            frame = frame.loc[nearest_dist > isolation_radius_pix].copy()
+            num_isolated = int(len(frame))
+
+        frame = frame.head(topk)
         per_detector_stats[detector_id] = {
             "num_reference_stars": int(len(frame)),
+            "num_reference_preselected": num_preselected,
+            "num_reference_isolated": num_isolated,
+            "catalog_g_mag_min": g_mag_min,
             "catalog_g_mag_max": g_mag_max,
             "topk": topk,
+            "preselect_topk": preselect_topk,
+            "isolation_radius_pix": isolation_radius_pix,
         }
         for row in frame.itertuples(index=False):
             reference.append(
@@ -530,6 +560,7 @@ def run_guide_first_frame_init(cfg: dict) -> dict:
         matched_per_detector[key] = matched_per_detector.get(key, 0) + 1
 
     for detector_id, stats in detector_stats.items():
+        reference_detector_stats = reference_stats[detector_id]
         stats["num_matched"] = matched_per_detector.get(detector_id, 0)
         stats["sim_to_detector_kind"] = sim_to_detector_map[detector_id]["kind"]
         stats["schema_version"] = sim_to_detector_map[detector_id]["schema_version"]
@@ -540,7 +571,11 @@ def run_guide_first_frame_init(cfg: dict) -> dict:
             stats["affine_fit_rms_pix"] = sim_to_detector_map[detector_id]["fit_rms_pix"]
             stats["affine_fit_max_pix"] = sim_to_detector_map[detector_id]["fit_max_pix"]
             stats["num_affine_fit_stars"] = sim_to_detector_map[detector_id]["num_fit_stars"]
-        stats["num_reference_stars"] = reference_stats[detector_id]["num_reference_stars"]
+        stats["num_reference_stars"] = reference_detector_stats["num_reference_stars"]
+        stats["num_reference_preselected"] = reference_detector_stats["num_reference_preselected"]
+        stats["num_reference_isolated"] = reference_detector_stats["num_reference_isolated"]
+        stats["reference_preselect_topk"] = reference_detector_stats["preselect_topk"]
+        stats["reference_isolation_radius_pix"] = reference_detector_stats["isolation_radius_pix"]
 
     return {
         "solution": solution,
@@ -580,6 +615,22 @@ def run_guide_first_frame_init(cfg: dict) -> dict:
             "dataset_root": str(dataset_root),
             "frame_index": int(cfg["guide_init"].get("frame_index", 0)),
             "reference_topk_per_detector": int(cfg["guide_init"]["reference_topk_per_detector"]),
+            "reference_preselect_topk_per_detector": int(
+                cfg["guide_init"].get(
+                    "reference_preselect_topk_per_detector",
+                    cfg["guide_init"]["reference_topk_per_detector"],
+                )
+            ),
+            "reference_isolation_radius_pix": (
+                None
+                if cfg["guide_init"].get("reference_isolation_radius_pix") is None
+                else float(cfg["guide_init"]["reference_isolation_radius_pix"])
+            ),
+            "catalog_g_mag_min": (
+                None
+                if cfg["guide_init"].get("catalog_g_mag_min") is None
+                else float(cfg["guide_init"]["catalog_g_mag_min"])
+            ),
             "catalog_g_mag_max": float(cfg["guide_init"]["catalog_g_mag_max"]),
             "max_observed_per_detector": int(cfg["guide_init"].get("max_observed_per_detector", 0)),
         },
