@@ -33,6 +33,9 @@ def test_associate_nearest_prefers_closest_reference():
     assert result.matched[0].catalog_id == 100
     assert result.debug["mean_residual_pix"] < 1.0
     assert result.debug["stars_per_detector"]["0"] == 1
+    assert result.debug["num_candidate_edges"] == 1
+    assert result.debug["unique_assignment_enabled"] is False
+    assert result.debug["num_unique_matches"] is None
 
 
 def test_validate_match_hypothesis_rejects_large_attitude_jump():
@@ -74,3 +77,5 @@ def test_match_stars_uses_context_mode():
     result = match_stars(ctx, reference, _cfg())
     assert result.mode == "tracking"
     assert result.success
+    assert result.debug["num_matched"] == 1
+    assert result.debug["num_candidate_edges"] == 1
