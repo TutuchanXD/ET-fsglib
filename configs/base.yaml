@@ -77,6 +77,7 @@ match:
   validate_max_residual_arcsec: 60.0
   validate_max_residual_pix: 25.0
   validate_min_support: 5
+  enforce_unique_assignment: false
 
 tracking:
   search_radius_pix: 10.0
