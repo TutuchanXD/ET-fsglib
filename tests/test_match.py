@@ -38,6 +38,28 @@ def test_associate_nearest_prefers_closest_reference():
     assert result.debug["num_unique_matches"] is None
 
 
+def test_associate_nearest_unique_assignment_uses_global_minimum():
+    observed = [
+        ObservedStar(0, 1, 0.0, 0.0, np.array([0.0, 0.0, 1.0]), flux=100.0, snr=20.0),
+        ObservedStar(0, 2, 10.0, 0.0, np.array([0.0, 0.0, 1.0]), flux=100.0, snr=20.0),
+    ]
+    reference = [
+        ReferenceStar(100, 0.0, np.array([0.0, 0.0, 1.0]), 10.5, [0], {0: (9.0, 0.0)}, {0: True}, 1.0),
+        ReferenceStar(200, 0.0, np.array([0.0, 0.0, 1.0]), 10.7, [0], {0: (11.0, 0.0)}, {0: True}, 1.0),
+    ]
+    cfg = _cfg()
+    cfg["match"]["validate_max_residual_pix"] = 20.0
+    cfg["match"]["enforce_unique_assignment"] = True
+
+    result = associate_nearest(observed, reference, cfg)
+
+    assert result.success
+    assert [(match.source_id, match.catalog_id) for match in result.matched] == [(1, 100), (2, 200)]
+    assert result.debug["num_candidate_edges"] == 4
+    assert result.debug["unique_assignment_enabled"] is True
+    assert result.debug["num_unique_matches"] == 2
+
+
 def test_validate_match_hypothesis_rejects_large_attitude_jump():
     matching = associate_nearest(
         [ObservedStar(0, 1, 10.0, 11.0, np.array([0.0, 0.0, 1.0]), flux=50.0, snr=10.0)],

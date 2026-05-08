@@ -241,6 +241,10 @@ Payload-specific configs override only the fields that differ for a run:
 
 Configuration files are merged in the example scripts with a recursive
 dictionary update. Values in the guide-specific YAML override `base.yaml`.
+`match.enforce_unique_assignment` defaults to `false`; when enabled, local
+predicted-position matching uses a per-detector one-to-one minimum-cost
+assignment instead of allowing multiple observations to reuse the same
+reference star.
 
 ## Pipeline Internals
 
