@@ -66,13 +66,19 @@ def _vector_stats(dx_values: list[float], dy_values: list[float]) -> dict[str, f
             "mean_abs_dy": None,
             "rms_dx": None,
             "rms_dy": None,
+            "std_dx": None,
+            "std_dy": None,
             "mean_radial": None,
             "median_radial": None,
             "rms_radial": None,
+            "std_radial": None,
+            "mean_abs_radial_deviation": None,
+            "rms_radial_deviation": None,
             "p95_radial": None,
             "max_radial": None,
         }
     radial = np.hypot(dx, dy)
+    radial_deviation = radial - float(np.mean(radial))
     return {
         "count": int(dx.size),
         "mean_dx": float(np.mean(dx)),
@@ -81,9 +87,14 @@ def _vector_stats(dx_values: list[float], dy_values: list[float]) -> dict[str, f
         "mean_abs_dy": float(np.mean(np.abs(dy))),
         "rms_dx": float(np.sqrt(np.mean(dx**2))),
         "rms_dy": float(np.sqrt(np.mean(dy**2))),
+        "std_dx": float(np.std(dx)),
+        "std_dy": float(np.std(dy)),
         "mean_radial": float(np.mean(radial)),
         "median_radial": float(np.median(radial)),
         "rms_radial": float(np.sqrt(np.mean(radial**2))),
+        "std_radial": float(np.std(radial)),
+        "mean_abs_radial_deviation": float(np.mean(np.abs(radial_deviation))),
+        "rms_radial_deviation": float(np.sqrt(np.mean(radial_deviation**2))),
         "p95_radial": float(np.percentile(radial, 95)),
         "max_radial": float(np.max(radial)),
     }

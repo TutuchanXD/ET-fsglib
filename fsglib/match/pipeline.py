@@ -9,6 +9,7 @@ def associate_nearest(
 ) -> MatchingResult:
     matched: list[MatchedStar] = []
     residuals_pix: list[float] = []
+    num_candidate_edges = 0
     max_dist2 = float(cfg["match"].get("validate_max_residual_pix", 25.0)) ** 2
 
     for obs in observed_stars:
@@ -29,6 +30,7 @@ def associate_nearest(
             if dist2 > max_dist2:
                 continue
 
+            num_candidate_edges += 1
             if best_dist is None or dist2 < best_dist:
                 best_dist = dist2
                 best = ref
@@ -81,6 +83,9 @@ def associate_nearest(
         debug={
             "selected_strategy": "predicted_position",
             "num_reference_stars": len(reference_stars),
+            "num_candidate_edges": num_candidate_edges,
+            "unique_assignment_enabled": False,
+            "num_unique_matches": None,
             "mean_residual_pix": mean_residual_pix,
             "stars_per_detector": stars_per_detector,
         },
@@ -153,9 +158,13 @@ def match_stars(
         debug={
             "algorithm": algorithm,
             "selected_strategy": selected_strategy,
+            "num_matched": len(matched),
             "num_local_matches": len(local_matches),
             "num_triangle_matches": len(triangle_matches),
             "num_reference_stars": len(reference_stars),
+            "num_candidate_edges": local_result.debug.get("num_candidate_edges", 0),
+            "unique_assignment_enabled": local_result.debug.get("unique_assignment_enabled", False),
+            "num_unique_matches": local_result.debug.get("num_unique_matches"),
             "mean_residual_pix": local_result.debug.get("mean_residual_pix"),
             "stars_per_detector": local_result.debug.get("stars_per_detector", {}),
         },

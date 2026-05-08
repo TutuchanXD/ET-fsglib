@@ -67,6 +67,12 @@
   - 各阶段耗时。
 - `matching.debug.mean_residual_pix`
   - 匹配阶段中，预测像点到观测质心的平均像面残差。
+- `matching.debug.num_candidate_edges`
+  - 通过像素残差门限的观测星-参考星候选边数量。
+- `matching.debug.unique_assignment_enabled`
+  - 是否启用了一对一参考星分配。
+- `matching.debug.num_unique_matches`
+  - 启用一对一分配时最终保留的唯一匹配数量。
 - `evaluation.centroid_mae_pix`
   - 提取质心到静态 `stars.ecsv` 的平均最近邻距离。
 - `evaluation.non_roll_error_arcsec`
