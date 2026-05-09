@@ -1,0 +1,227 @@
+import numpy as np
+
+from fsglib.common.types import MatchingContext, ObservedStar
+from fsglib.ephemeris.types import ReferenceStar
+from fsglib.match.pipeline import match_stars
+from fsglib.match.pyramid import match_local_pyramid
+
+
+def _unit(x: float, y: float, z: float = 1.0) -> np.ndarray:
+    vec = np.array([x, y, z], dtype=np.float64)
+    return vec / np.linalg.norm(vec)
+
+
+def _rotation_z(theta_rad: float) -> np.ndarray:
+    c = np.cos(theta_rad)
+    s = np.sin(theta_rad)
+    return np.array(
+        [
+            [c, -s, 0.0],
+            [s, c, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float64,
+    )
+
+
+def _cfg() -> dict:
+    return {
+        "match": {
+            "algorithm": "local_pyramid",
+            "validate_min_support": 4,
+            "validate_max_residual_pix": 2.0,
+            "local_pyramid": {
+                "max_observed_stars": 10,
+                "max_reference_stars": 10,
+                "seed_scopes": ["single_detector", "mixed_detector"],
+                "pair_angle_tol_arcsec_single_detector": 1200.0,
+                "pair_angle_tol_arcsec_mixed_detector": 2400.0,
+                "seed_rms_gate_arcsec": 5.0,
+                "seed_max_gate_arcsec": 10.0,
+                "expand_angular_gate_arcsec": 10.0,
+                "expand_pixel_gate_pix": 2.0,
+                "min_expanded_matches": 4,
+            },
+        },
+        "attitude": {"outlier_max_residual_arcsec": 30.0},
+        "tracking": {"max_attitude_jump_arcsec": 100.0},
+    }
+
+
+def _reference_stars(detector_id=0) -> list[ReferenceStar]:
+    vectors = [
+        _unit(-0.030, -0.020),
+        _unit(0.024, -0.018),
+        _unit(0.018, 0.032),
+        _unit(-0.026, 0.027),
+        _unit(0.043, 0.021),
+    ]
+    refs = []
+    for index, vector in enumerate(vectors):
+        x = 100.0 + 25.0 * index
+        y = 200.0 + 17.0 * index
+        refs.append(
+            ReferenceStar(
+                catalog_id=1000 + index,
+                time_s=0.0,
+                los_inertial=vector,
+                mag_g=9.0 + index,
+                detector_ids_visible=[detector_id],
+                predicted_xy={detector_id: (x, y)},
+                predicted_valid={detector_id: True},
+                weight_hint=1.0,
+            )
+        )
+    return refs
+
+
+def _observed_from_refs(refs: list[ReferenceStar], c_ib: np.ndarray | None = None) -> list[ObservedStar]:
+    if c_ib is None:
+        c_ib = np.eye(3, dtype=np.float64)
+    observed = []
+    for index, ref in enumerate(refs):
+        detector_id = ref.detector_ids_visible[0]
+        x, y = ref.predicted_xy[detector_id]
+        observed.append(
+            ObservedStar(
+                detector_id=detector_id,
+                source_id=2000 + index,
+                x=x,
+                y=y,
+                los_body=c_ib @ ref.los_inertial,
+                flux=1000.0 - index,
+                snr=100.0 - index,
+            )
+        )
+    return observed
+
+
+def test_local_pyramid_matches_rotated_reference_stars():
+    refs = _reference_stars()
+    observed = _observed_from_refs(refs, _rotation_z(np.deg2rad(0.2)))
+
+    result = match_local_pyramid(observed, refs, _cfg())
+
+    assert result.success
+    assert [match.catalog_id for match in result.matched] == [ref.catalog_id for ref in refs]
+    assert len({match.catalog_id for match in result.matched}) == len(result.matched)
+    assert result.debug["best_seed_scope"] == "single_detector"
+    assert result.debug["best_expanded_matches"] == 5
+
+
+def test_local_pyramid_rejects_false_observed_star_during_expansion():
+    refs = _reference_stars()[:4]
+    observed = _observed_from_refs(refs)
+    observed.append(
+        ObservedStar(
+            detector_id=0,
+            source_id=9999,
+            x=900.0,
+            y=900.0,
+            los_body=_unit(0.20, -0.10),
+            flux=5000.0,
+            snr=500.0,
+        )
+    )
+
+    result = match_local_pyramid(observed, refs, _cfg())
+
+    assert result.success
+    assert len(result.matched) == 4
+    assert 9999 in result.unmatched_observed_ids
+    assert [match.catalog_id for match in result.matched] == [ref.catalog_id for ref in refs]
+
+
+def test_match_stars_uses_local_pyramid_when_configured():
+    refs = _reference_stars()
+    observed = _observed_from_refs(refs)
+    ctx = MatchingContext(
+        mode="init",
+        time_s=0.0,
+        observed_stars=observed,
+        prior_attitude_q=None,
+        detector_layout={},
+        optical_model={},
+        matching_cfg=_cfg()["match"],
+        reference_stars=refs,
+    )
+
+    result = match_stars(ctx, refs, _cfg())
+
+    assert result.success
+    assert result.mode == "init"
+    assert result.debug["selected_strategy"] == "local_pyramid"
+    assert result.debug["num_pyramid_matches"] == 5
+    assert result.debug["num_predicted_position_matches"] == 5
+    assert result.debug["num_local_pyramid_matches"] == 5
+    assert result.debug["num_triangle_matches"] == 0
+
+
+def test_match_stars_hybrid_keeps_predicted_position_on_equal_support():
+    refs = _reference_stars()
+    observed = _observed_from_refs(refs)
+    cfg = _cfg()
+    cfg["match"]["algorithm"] = "predicted_position_and_local_pyramid"
+    ctx = MatchingContext(
+        mode="init",
+        time_s=0.0,
+        observed_stars=observed,
+        prior_attitude_q=None,
+        detector_layout={},
+        optical_model={},
+        matching_cfg=cfg["match"],
+        reference_stars=refs,
+    )
+
+    result = match_stars(ctx, refs, cfg)
+
+    assert result.success
+    assert result.debug["selected_strategy"] == "predicted_position"
+    assert result.debug["num_predicted_position_matches"] == 5
+    assert result.debug["num_local_pyramid_matches"] == 5
+    assert [match.flags["match_mode"] for match in result.matched] == ["predicted_position"] * 5
+
+
+def test_local_pyramid_prefers_detector_local_seed_before_mixed_seed():
+    refs = _reference_stars(detector_id="guide_left")
+    observed = _observed_from_refs(refs)
+    extra_ref = ReferenceStar(
+        catalog_id=3000,
+        time_s=0.0,
+        los_inertial=_unit(0.07, -0.03),
+        mag_g=14.0,
+        detector_ids_visible=["guide_right"],
+        predicted_xy={"guide_right": (700.0, 800.0)},
+        predicted_valid={"guide_right": True},
+        weight_hint=1.0,
+    )
+    refs.append(extra_ref)
+    observed.append(
+        ObservedStar(
+            detector_id="guide_right",
+            source_id=4000,
+            x=700.0,
+            y=800.0,
+            los_body=extra_ref.los_inertial,
+            flux=10.0,
+            snr=10.0,
+        )
+    )
+
+    result = match_local_pyramid(observed, refs, _cfg())
+
+    assert result.success
+    assert result.debug["best_seed_scope"] == "single_detector"
+    assert result.debug["best_seed_detector_ids"] == ["guide_left"]
+    assert len(result.matched) == 6
+
+
+def test_local_pyramid_reports_clean_failure_when_under_supported():
+    refs = _reference_stars()[:3]
+    observed = _observed_from_refs(refs)
+
+    result = match_local_pyramid(observed, refs, _cfg())
+
+    assert not result.success
+    assert result.matched == []
+    assert result.debug["rejection_reason"] == "not_enough_observed_stars"

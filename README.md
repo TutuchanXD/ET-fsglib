@@ -241,10 +241,9 @@ Payload-specific configs override only the fields that differ for a run:
 
 Configuration files are merged in the example scripts with a recursive
 dictionary update. Values in the guide-specific YAML override `base.yaml`.
-`match.enforce_unique_assignment` defaults to `false`; when enabled, local
-predicted-position matching uses a per-detector one-to-one minimum-cost
-assignment instead of allowing multiple observations to reuse the same
-reference star.
+`match.enforce_unique_assignment` defaults to `true`; predicted-position
+matching uses a per-detector one-to-one minimum-cost assignment instead of
+allowing multiple observations to reuse the same reference star.
 
 ## Pipeline Internals
 
@@ -262,8 +261,9 @@ The major internal stages are:
 - `fsglib.pipeline.run_guide_init`: bridge simulation pixel coordinates to
   `et_focalplane` detector coordinates, generate LOS vectors, and build
   per-detector reference stars.
-- `fsglib.match.pipeline.match_stars`: run local-triangle or predicted-position
-  matching depending on context.
+- `fsglib.match.pipeline.match_stars`: run predicted-position matching by
+  default, with local pyramid matching available for initialization and
+  reacquisition experiments.
 - `fsglib.attitude.solver.solve_attitude`: solve inertial-to-body attitude with
   QUEST and optional outlier rejection.
 - `fsglib.pipeline.guide_error_audit.compute_guide_error_audit`: compare truth,
@@ -310,7 +310,7 @@ pytest -q
 The current tests cover core math and data-flow components, including:
 
 - centroid extraction methods and bias-correction checks;
-- star matching and triangle matching;
+- star matching and local pyramid matching;
 - QUEST attitude solving;
 - frame evaluation metrics;
 - ET-coordinate config-factory selection;

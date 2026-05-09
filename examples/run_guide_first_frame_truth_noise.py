@@ -71,6 +71,8 @@ def main() -> None:
     print(f"Observed stars: {result['observed_count']}")
     print(f"Reference stars: {result['reference_count']}")
     print(f"Matching strategy: {matching.debug.get('selected_strategy')}")
+    print(f"Predicted-position matches: {matching.debug.get('num_predicted_position_matches')}")
+    print(f"Local-pyramid matches: {matching.debug.get('num_local_pyramid_matches')}")
     print(f"Mean residual (pix): {matching.debug.get('mean_residual_pix')}")
     print(
         "Body model fit RMS (arcsec): "

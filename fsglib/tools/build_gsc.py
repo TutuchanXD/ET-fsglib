@@ -1,3 +1,10 @@
+"""Deprecated builder for legacy global triangle NPZ indexes.
+
+The generated ``gsc_*.npz`` files are not part of the active guide pipeline and
+should not be used for current simulations. Local pyramid matching now builds
+its candidate index from the frame's ``ReferenceStar`` list instead.
+"""
+
 import argparse
 import os
 import glob

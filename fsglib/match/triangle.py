@@ -1,3 +1,11 @@
+"""Deprecated global triangle-index matcher.
+
+This module depends on obsolete local ``data/catalogs/gsc_*.npz`` bundles and is
+kept only as a legacy reference while the local pyramid matcher is introduced.
+New guide-star matching code should use ``fsglib.match.pyramid`` with the active
+``ReferenceStar`` list produced from ``et_focalplane`` / ``GaiaCatalog``.
+"""
+
 import numpy as np
 import itertools
 from collections import defaultdict

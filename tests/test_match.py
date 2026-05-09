@@ -10,7 +10,7 @@ def _cfg():
         "match": {
             "validate_max_residual_pix": 5.0,
             "validate_min_support": 1,
-            "algorithm": "local_triangle",
+            "algorithm": "predicted_position",
         },
         "attitude": {"outlier_max_residual_arcsec": 30.0},
         "tracking": {"max_attitude_jump_arcsec": 100.0},
@@ -31,6 +31,8 @@ def test_associate_nearest_prefers_closest_reference():
     assert result.success
     assert len(result.matched) == 1
     assert result.matched[0].catalog_id == 100
+    assert result.debug["num_predicted_position_matches"] == 1
+    assert result.debug["num_local_pyramid_matches"] == 0
     assert result.debug["mean_residual_pix"] < 1.0
     assert result.debug["stars_per_detector"]["0"] == 1
     assert result.debug["num_candidate_edges"] == 1
