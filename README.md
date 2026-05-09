@@ -62,7 +62,7 @@ fsglib/
 ├── common/                # Shared infrastructure
 │   ├── coords.py          #   RA/Dec ↔ unit vector conversions
 │   ├── io.py              #   NPZ frame loading, dataset batch I/O, truth table parsing
-│   ├── types.py           #   20+ dataclasses covering the full pipeline data model
+│   ├── types.py           #   Shared dataclasses covering the full pipeline data model
 │   └── debug.py           #   Debug helpers
 ├── ephemeris/             # Ephemeris and reference star management
 │   ├── catalog.py         #   Star catalog query interface
@@ -96,7 +96,7 @@ fsglib/
 
 | Module | Role | Key Functions |
 |--------|------|---------------|
-| `common` | Data types, coordinate math, file I/O | `load_npz_frame`, `radec_to_unit_vector`, 20 dataclasses |
+| `common` | Data types, coordinate math, file I/O | `load_npz_frame`, `radec_to_unit_vector`, shared pipeline dataclasses |
 | `preprocess` | Image conditioning | `preprocess_frame` — median background subtraction, std-dev noise map |
 | `extract` | Star detection and centroiding | `extract_stars` — SNR-threshold island detection, weighted-centroid / fixed-window first-moment |
 | `ephemeris` | Reference star query and projection | Gaia catalog queries, sky-to-detector projection, proper-motion correction |
