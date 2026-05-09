@@ -15,5 +15,6 @@ dist/
 
 outputs/
 data/
+plan/
 
 .DS_Store
