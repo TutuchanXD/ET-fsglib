@@ -88,6 +88,8 @@ def _build_matching_result(
             "selected_strategy": "predicted_position",
             "num_reference_stars": len(reference_stars),
             "num_candidate_edges": num_candidate_edges,
+            "num_predicted_position_matches": len(matched),
+            "num_local_pyramid_matches": 0,
             "unique_assignment_enabled": unique_assignment_enabled,
             "num_unique_matches": len(matched) if unique_assignment_enabled else None,
             "mean_residual_pix": mean_residual_pix,
@@ -149,7 +151,7 @@ def associate_nearest(
     reference_stars: list[ReferenceStar],
     cfg: dict,
 ) -> MatchingResult:
-    if cfg["match"].get("enforce_unique_assignment", False):
+    if cfg["match"].get("enforce_unique_assignment", True):
         return _associate_nearest_unique_by_distance(observed_stars, reference_stars, cfg)
 
     matched: list[MatchedStar] = []
@@ -229,22 +231,55 @@ def match_stars(
     reference_stars: list[ReferenceStar],
     cfg: dict,
 ) -> MatchingResult:
-    algorithm = cfg["match"].get("algorithm", "local_triangle")
+    algorithm = cfg["match"].get("algorithm", "predicted_position")
     local_result = associate_nearest(ctx.observed_stars, reference_stars, cfg)
     local_matches = local_result.matched
     triangle_matches: list[MatchedStar] = []
+    pyramid_result: MatchingResult | None = None
 
     if algorithm in {"triangle", "local_triangle"}:
         triangle_matches = _match_with_triangle(ctx.observed_stars, reference_stars, cfg)
+    elif algorithm in {
+        "local_pyramid",
+        "predicted_position_with_pyramid_reacquire",
+        "predicted_position_and_local_pyramid",
+    }:
+        from fsglib.match.pyramid import match_local_pyramid
+
+        if algorithm in {"local_pyramid", "predicted_position_and_local_pyramid"} or not local_result.success:
+            pyramid_result = match_local_pyramid(ctx.observed_stars, reference_stars, cfg)
 
     matched = local_matches
     selected_strategy = "predicted_position"
-    if len(triangle_matches) > len(local_matches):
+    if algorithm == "local_pyramid":
+        matched = [] if pyramid_result is None else pyramid_result.matched
+        selected_strategy = "local_pyramid" if matched else "local_pyramid_failed"
+    elif algorithm == "predicted_position_and_local_pyramid" and pyramid_result is not None:
+        if len(pyramid_result.matched) > len(local_matches):
+            matched = pyramid_result.matched
+            selected_strategy = "local_pyramid"
+    elif algorithm == "predicted_position_with_pyramid_reacquire" and pyramid_result is not None:
+        if pyramid_result.success:
+            matched = pyramid_result.matched
+            selected_strategy = "local_pyramid"
+        else:
+            selected_strategy = "predicted_position_failed"
+    elif len(triangle_matches) > len(local_matches):
         matched = triangle_matches
         selected_strategy = "triangle"
 
     matched_source_ids = {m.source_id for m in matched}
     matched_catalog_ids = {m.catalog_id for m in matched}
+    residuals_pix = [
+        float(m.flags["residual_pix"])
+        for m in matched
+        if m.flags.get("residual_pix") is not None
+    ]
+    mean_residual_pix = float(sum(residuals_pix) / len(residuals_pix)) if residuals_pix else None
+    stars_per_detector: dict[str, int] = {}
+    for matched_star in matched:
+        key = str(matched_star.detector_id)
+        stars_per_detector[key] = stars_per_detector.get(key, 0) + 1
 
     result = MatchingResult(
         matched=matched,
@@ -262,13 +297,21 @@ def match_stars(
             "selected_strategy": selected_strategy,
             "num_matched": len(matched),
             "num_local_matches": len(local_matches),
+            "num_predicted_position_matches": len(local_matches),
             "num_triangle_matches": len(triangle_matches),
+            "num_pyramid_matches": 0 if pyramid_result is None else len(pyramid_result.matched),
+            "num_local_pyramid_matches": 0 if pyramid_result is None else len(pyramid_result.matched),
             "num_reference_stars": len(reference_stars),
             "num_candidate_edges": local_result.debug.get("num_candidate_edges", 0),
-            "unique_assignment_enabled": local_result.debug.get("unique_assignment_enabled", False),
-            "num_unique_matches": local_result.debug.get("num_unique_matches"),
-            "mean_residual_pix": local_result.debug.get("mean_residual_pix"),
-            "stars_per_detector": local_result.debug.get("stars_per_detector", {}),
+            "unique_assignment_enabled": (
+                True if selected_strategy == "local_pyramid" else local_result.debug.get("unique_assignment_enabled", False)
+            ),
+            "num_unique_matches": len(matched)
+            if selected_strategy == "local_pyramid"
+            else local_result.debug.get("num_unique_matches"),
+            "mean_residual_pix": mean_residual_pix,
+            "stars_per_detector": stars_per_detector,
+            "pyramid_debug": None if pyramid_result is None else pyramid_result.debug,
         },
     )
     return result

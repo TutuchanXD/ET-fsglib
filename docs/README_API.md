@@ -348,8 +348,10 @@ __Version：1.0.0__
 策略：
 
 - 基于预测像点的最近邻；
-- `match.algorithm` 为 `triangle` 或 `local_triangle`，再尝试三角匹配（TODO: 实现有问题，需检查——chenxu）；
-- 二者中选匹配数更多的一组。
+- `match.algorithm` 为 `local_pyramid` 时，使用当前 `ReferenceStar` 列表构建局部金字塔匹配；
+- `match.algorithm` 为 `predicted_position_and_local_pyramid` 时，两种匹配都运行，选择匹配星点数更多的一组；
+- `match.algorithm` 为 `predicted_position_with_pyramid_reacquire` 时，预测像点匹配失败后再尝试局部金字塔；
+- 旧 `triangle` / `local_triangle` 依赖已废弃的本地 GSC NPZ 索引，只保留为 legacy 路径。
 
 `associate_nearest(...) -> MatchingResult`
 

@@ -27,9 +27,28 @@ et_coord:
   gaia_root_dir: /home/cxgao/gaia_dr3_19mag
 
 match:
-  algorithm: local_triangle
+  algorithm: predicted_position_and_local_pyramid
+  mode: init
+  init_max_catalog_radius_deg: 1.5
+  init_bright_star_topk: 20
+  pair_angle_tol_arcsec: 120.0
+  hypothesis_topk: 50
+  validate_max_residual_arcsec: 60.0
   validate_max_residual_pix: 10.0
   validate_min_support: 5
+  enforce_unique_assignment: true
+  local_pyramid:
+    enabled: false
+    max_observed_stars: 40
+    max_reference_stars: 300
+    seed_scopes: ["single_detector", "mixed_detector"]
+    pair_angle_tol_arcsec_single_detector: 120.0
+    pair_angle_tol_arcsec_mixed_detector: 300.0
+    seed_rms_gate_arcsec: 60.0
+    seed_max_gate_arcsec: 180.0
+    expand_angular_gate_arcsec: 120.0
+    expand_pixel_gate_pix: 10.0
+    min_expanded_matches: 5
 
 attitude:
   outlier_reject_enable: true

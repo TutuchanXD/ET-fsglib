@@ -65,10 +65,7 @@ bias_profiles:
   by_psf_model: {}
 
 match:
-  algorithm: "local_triangle"
-  triangle_tolerance_deg: 0.005
-  triangle_max_stars: 15
-  triangle_gsc_path: "/home/cxgao/ET/FSG/fsglib/data/catalogs/gsc_8mag.npz"
+  algorithm: "predicted_position"
   mode: init
   init_max_catalog_radius_deg: 1.5
   init_bright_star_topk: 20
@@ -77,7 +74,19 @@ match:
   validate_max_residual_arcsec: 60.0
   validate_max_residual_pix: 25.0
   validate_min_support: 5
-  enforce_unique_assignment: false
+  enforce_unique_assignment: true
+  local_pyramid:
+    enabled: false
+    max_observed_stars: 40
+    max_reference_stars: 300
+    seed_scopes: ["single_detector", "mixed_detector"]
+    pair_angle_tol_arcsec_single_detector: 120.0
+    pair_angle_tol_arcsec_mixed_detector: 300.0
+    seed_rms_gate_arcsec: 60.0
+    seed_max_gate_arcsec: 180.0
+    expand_angular_gate_arcsec: 120.0
+    expand_pixel_gate_pix: 25.0
+    min_expanded_matches: 5
 
 tracking:
   search_radius_pix: 10.0

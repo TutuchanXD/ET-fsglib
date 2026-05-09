@@ -69,6 +69,10 @@
   - 匹配阶段中，预测像点到观测质心的平均像面残差。
 - `matching.debug.num_candidate_edges`
   - 通过像素残差门限的观测星-参考星候选边数量。
+- `matching.debug.num_predicted_position_matches`
+  - 预测像点邻域匹配得到的星点数。
+- `matching.debug.num_local_pyramid_matches`
+  - 局部金字塔匹配得到的星点数；未运行该策略时为 0。
 - `matching.debug.unique_assignment_enabled`
   - 是否启用了一对一参考星分配。
 - `matching.debug.num_unique_matches`
