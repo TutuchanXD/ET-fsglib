@@ -264,7 +264,7 @@ the background-subtracted finite pixels, floored at `1e-6`.
 | `extract.bias_correction.profile` | string or null | `null` | active | Named profile under `bias_profiles.profiles`. If null, profile is resolved from PSF model key. |
 | `extract.bias_correction.psf_model_key` | string or null | `null` | active | Overrides `psf.active_model_key` for automatic profile lookup. |
 | `extract.bias_correction.calibration_key` | string | `fsg` | active | Selects table fields such as `<calibration_key>_x_pix` and `<calibration_key>_dx_err_pix`. |
-| `extract.bias_correction.auto_resolve_psf_model` | bool | `true` | declared | Current resolver automatically falls back to PSF model key whenever `profile` is null. |
+| `extract.bias_correction.auto_resolve_psf_model` | bool | `true` | reserved | Ignored by the current implementation; the resolver always falls back to `psf_model_key` or `psf.active_model_key` whenever `profile` is null. |
 | `extract.bias_correction.strict_centroid_check` | bool | `true` | active | Verifies configured centroid method/window against profile metadata when present. |
 | `extract.bias_correction.idw_k` | int | `12` | active | Number of nearest calibration samples used by inverse-distance interpolation. |
 | `extract.bias_correction.idw_power` | float | `2.0` | active | Power used by inverse-distance interpolation. |
@@ -585,6 +585,7 @@ behavior:
 - `preprocess.sigma_clip_k`
 - `preprocess.denoise_method`
 - `extract.detection_image`
+- `extract.bias_correction.auto_resolve_psf_model`
 - `extract.grow_threshold_sigma`
 - `extract.max_ellipticity`
 - `match.init_bright_star_topk`
