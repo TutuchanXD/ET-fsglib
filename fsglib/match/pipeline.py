@@ -151,7 +151,7 @@ def associate_nearest(
     reference_stars: list[ReferenceStar],
     cfg: dict,
 ) -> MatchingResult:
-    if cfg["match"].get("enforce_unique_assignment", False):
+    if cfg["match"].get("enforce_unique_assignment", True):
         return _associate_nearest_unique_by_distance(observed_stars, reference_stars, cfg)
 
     matched: list[MatchedStar] = []

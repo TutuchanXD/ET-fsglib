@@ -326,7 +326,6 @@ def _build_expansion_edges(
 def _assign_expansion_edges(
     edges: list[ExpansionEdge],
     observed_stars: list[ObservedStar],
-    reference_stars: list[ReferenceStar],
 ) -> list[ExpansionEdge]:
     by_detector: dict[Any, list[ExpansionEdge]] = defaultdict(list)
     for edge in edges:
@@ -355,15 +354,11 @@ def _assign_expansion_edges(
 
     kept: list[ExpansionEdge] = []
     used_observed: set[int] = set()
-    used_catalog_ids: set[int] = set()
     for edge in sorted(selected, key=lambda item: item[0]):
         obs_index = edge[1]
-        ref_index = edge[2]
-        catalog_id = int(reference_stars[ref_index].catalog_id)
-        if obs_index in used_observed or catalog_id in used_catalog_ids:
+        if obs_index in used_observed:
             continue
         used_observed.add(obs_index)
-        used_catalog_ids.add(catalog_id)
         kept.append(edge)
 
     kept.sort(key=lambda item: item[1])
@@ -552,7 +547,7 @@ def match_local_pyramid(
                     continue
                 seed.reference_indices = original_ref_seed
                 edges = _build_expansion_edges(seed, observed_stars, reference_stars, cfg)
-                assigned = _assign_expansion_edges(edges, observed_stars, reference_stars)
+                assigned = _assign_expansion_edges(edges, observed_stars)
                 matched = _build_matched_stars(seed, assigned, observed_stars, reference_stars)
                 if len(matched) < min_expanded:
                     continue

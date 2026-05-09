@@ -216,6 +216,37 @@ def test_local_pyramid_prefers_detector_local_seed_before_mixed_seed():
     assert len(result.matched) == 6
 
 
+def test_local_pyramid_allows_same_catalog_on_different_detectors():
+    refs = _reference_stars(detector_id="guide_left")
+    shared_ref = refs[0]
+    shared_ref.detector_ids_visible.append("guide_right")
+    shared_ref.predicted_xy["guide_right"] = (700.0, 800.0)
+    shared_ref.predicted_valid["guide_right"] = True
+    observed = _observed_from_refs(refs)
+    observed.append(
+        ObservedStar(
+            detector_id="guide_right",
+            source_id=5000,
+            x=700.0,
+            y=800.0,
+            los_body=shared_ref.los_inertial,
+            flux=900.0,
+            snr=90.0,
+        )
+    )
+
+    result = match_local_pyramid(observed, refs, _cfg())
+
+    assert result.success
+    assert len(result.matched) == 6
+    repeated = [
+        match
+        for match in result.matched
+        if match.catalog_id == shared_ref.catalog_id
+    ]
+    assert [match.detector_id for match in repeated] == ["guide_left", "guide_right"]
+
+
 def test_local_pyramid_reports_clean_failure_when_under_supported():
     refs = _reference_stars()[:3]
     observed = _observed_from_refs(refs)

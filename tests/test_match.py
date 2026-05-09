@@ -36,8 +36,8 @@ def test_associate_nearest_prefers_closest_reference():
     assert result.debug["mean_residual_pix"] < 1.0
     assert result.debug["stars_per_detector"]["0"] == 1
     assert result.debug["num_candidate_edges"] == 1
-    assert result.debug["unique_assignment_enabled"] is False
-    assert result.debug["num_unique_matches"] is None
+    assert result.debug["unique_assignment_enabled"] is True
+    assert result.debug["num_unique_matches"] == 1
 
 
 def test_associate_nearest_unique_assignment_uses_global_minimum():
