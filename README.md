@@ -52,6 +52,93 @@ centroid errors.
   development environment.
 - `pyproject.toml`: package metadata and pytest configuration.
 
+## Package Architecture
+
+```
+fsglib/
+├── attitude/              # Attitude solving (QUEST algorithm)
+│   ├── solver.py          #   solve_quest, solve_attitude, reject_outliers
+│   └── __init__.py
+├── common/                # Shared infrastructure
+│   ├── coords.py          #   RA/Dec ↔ unit vector conversions
+│   ├── io.py              #   NPZ frame loading, dataset batch I/O, truth table parsing
+│   ├── types.py           #   20+ dataclasses covering the full pipeline data model
+│   └── debug.py           #   Debug helpers
+├── ephemeris/             # Ephemeris and reference star management
+│   ├── catalog.py         #   Star catalog query interface
+│   ├── pipeline.py        #   Ephemeris pipeline orchestration
+│   ├── projector.py       #   Sky-to-detector projection models
+│   └── types.py           #   CatalogStar, ReferenceStar, EphemerisContext
+├── extract/               # Star candidate extraction
+│   ├── pipeline.py        #   extract_stars: island detection + centroid computation
+│   └── bias.py            #   Centroid bias prediction and correction
+├── match/                 # Star matching
+│   ├── pipeline.py        #   match_stars: predicted-position + triangle matching
+│   └── triangle.py        #   TriangleMatcher implementation
+├── models/                # Optical and detector models
+│   └── mock.py            #   Mock models for testing
+├── pipeline/              # High-level orchestration (core business logic)
+│   ├── run_guide_init.py          # Guide first-frame init main entry point
+│   ├── run_guide_truth_noise.py   # Truth-noise workflow (bypasses real centroid extraction)
+│   ├── run_init.py                # Generic single-frame initialization API
+│   ├── run_tracking.py            # Multi-frame sequence tracking
+│   ├── evaluate.py                # Frame evaluation and sequence summary metrics
+│   ├── guide_error_audit.py       # Per-star error decomposition and counterfactual analysis
+│   ├── centroid_audit.py          # Centroid step-by-step audit
+│   └── convert.py                 # Format conversion utilities
+├── preprocess/            # Image preprocessing
+│   └── pipeline.py        #   preprocess_frame: background subtraction + noise estimation
+└── tools/                 # Build and maintenance utilities
+    └── build_gsc.py       #   GSC star catalog builder
+```
+
+### Module Responsibilities
+
+| Module | Role | Key Functions |
+|--------|------|---------------|
+| `common` | Data types, coordinate math, file I/O | `load_npz_frame`, `radec_to_unit_vector`, 20 dataclasses |
+| `preprocess` | Image conditioning | `preprocess_frame` — median background subtraction, std-dev noise map |
+| `extract` | Star detection and centroiding | `extract_stars` — SNR-threshold island detection, weighted-centroid / fixed-window first-moment |
+| `ephemeris` | Reference star query and projection | Gaia catalog queries, sky-to-detector projection, proper-motion correction |
+| `match` | Observed-to-reference star association | Predicted-position nearest-neighbour, Hungarian unique assignment, triangle matching |
+| `attitude` | QUEST attitude solving | `solve_quest`, `solve_attitude` with iterative outlier rejection, degraded-level detection |
+| `pipeline` | End-to-end workflow orchestration | Guide first-frame init, truth-noise runs, sequence tracking, error audit |
+
+### Data Flow
+
+```
+Simulated NPZ frames
+        │
+        ▼
+  [common.io]  load_npz_frame()  ──►  RawFrame
+        │
+        ▼
+  [preprocess] preprocess_frame()  ──►  PreprocessedFrame
+        │
+        ▼
+  [extract]   extract_stars()  ──►  list[StarCandidate]
+        │
+        ▼
+  [pipeline]  sim→detector coord bridge  ──►  list[ObservedStar]
+              (offset or affine transform)
+        │
+        ▼
+  [ephemeris] Gaia catalog query  ──►  list[ReferenceStar]
+        │
+        ▼
+  [match]     match_stars()  ──►  MatchingResult
+        │
+        ▼
+  [attitude]  solve_attitude()  ──►  AttitudeSolution
+        │
+        ▼
+  [pipeline]  compute_guide_error_audit()  ──►  error audit JSON
+```
+
+The pipeline supports two detector families — **transit** and **microlensing** — each with
+four guide detectors. The active family is selected via `et_coord.config_factory` in the
+YAML configuration, not by hard-coded detector names in the solver.
+
 ## Main Workflows
 
 ### Transit Guide First Frame With Real Centroids
