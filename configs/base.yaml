@@ -84,9 +84,21 @@ match:
     pair_angle_tol_arcsec_mixed_detector: 300.0
     seed_rms_gate_arcsec: 60.0
     seed_max_gate_arcsec: 180.0
+    expansion_policy: predicted_xy
+    geometry_only_allowed: false
+    reacquire_expansion_policy: seed_attitude_only
+    reacquire_geometry_only_allowed: true
     expand_angular_gate_arcsec: 120.0
     expand_pixel_gate_pix: 25.0
     min_expanded_matches: 5
+    ambiguity_min_score_margin: 1.0
+    detector_mean_warn_pix: 5.0
+    detector_mean_reject_pix: 25.0
+    detector_rms_reject_pix: 25.0
+    detector_max_reject_pix: 50.0
+    mixed_detector_reject_on_detector_warning: true
+    photometric_rank_weight: 0.0
+    seed_consistency_penalty: 1.0e-6
 
 tracking:
   search_radius_pix: 10.0

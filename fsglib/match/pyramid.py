@@ -169,14 +169,23 @@ class SeedSolution:
     detector_ids: tuple[Any, ...]
 
 
-ExpansionEdge = tuple[float, int, int, float, float | None, tuple[float, float] | None]
+ExpansionEdge = tuple[float, int, int, float, float | None, tuple[float, float] | None, float]
+HypothesisPayload = tuple[float, tuple[int, float, float], SeedSolution, list[MatchedStar], dict[str, Any]]
 
 
-def _cfg_value(cfg: dict, name: str, default):
+def _cfg_value(cfg: dict, name: str, default, pyramid_mode: str | None = None):
     match_cfg = cfg.get("match", {})
     pyramid_cfg = match_cfg.get("local_pyramid", {})
+    if pyramid_mode is not None and isinstance(pyramid_cfg, dict):
+        mode_name = f"{pyramid_mode}_{name}"
+        if mode_name in pyramid_cfg:
+            return pyramid_cfg[mode_name]
     if isinstance(pyramid_cfg, dict) and name in pyramid_cfg:
         return pyramid_cfg[name]
+    if pyramid_mode is not None:
+        flat_mode_name = f"pyramid_{pyramid_mode}_{name}"
+        if flat_mode_name in match_cfg:
+            return match_cfg[flat_mode_name]
     flat_name = f"pyramid_{name}"
     if flat_name in match_cfg:
         return match_cfg[flat_name]
@@ -236,6 +245,39 @@ def _reference_sort_key(item: tuple[int, ReferenceStar]) -> tuple[float, float, 
     index, star = item
     mag = np.inf if star.mag_g is None else float(star.mag_g)
     return mag, -float(star.weight_hint), int(index)
+
+
+def _observed_brightness_ranks(observed_stars: list[ObservedStar]) -> dict[int, int]:
+    indexed = list(enumerate(observed_stars))
+    indexed.sort(
+        key=lambda item: (
+            float(item[1].snr),
+            float(item[1].flux),
+            -float(item[0]),
+        ),
+        reverse=True,
+    )
+    return {index: rank for rank, (index, _) in enumerate(indexed)}
+
+
+def _reference_brightness_ranks(reference_stars: list[ReferenceStar]) -> dict[int, int]:
+    indexed = list(enumerate(reference_stars))
+    indexed.sort(key=_reference_sort_key)
+    return {index: rank for rank, (index, _) in enumerate(indexed)}
+
+
+def _photometric_rank_penalty(
+    obs_index: int,
+    ref_index: int,
+    observed_ranks: dict[int, int],
+    reference_ranks: dict[int, int],
+    rank_count: int,
+) -> float:
+    if rank_count <= 1:
+        return 0.0
+    obs_rank = observed_ranks[obs_index]
+    ref_rank = reference_ranks[ref_index]
+    return float(abs(obs_rank - ref_rank) / float(rank_count - 1))
 
 
 def _select_reference(reference_stars: list[ReferenceStar], cfg: dict) -> tuple[list[ReferenceStar], list[int]]:
@@ -429,14 +471,36 @@ def _build_expansion_edges(
     observed_stars: list[ObservedStar],
     reference_stars: list[ReferenceStar],
     cfg: dict,
-) -> tuple[list[ExpansionEdge], dict[str, float | int]]:
-    angular_gate = float(_cfg_value(cfg, "expand_angular_gate_arcsec", 120.0))
-    pixel_gate = float(_cfg_value(cfg, "expand_pixel_gate_pix", cfg.get("match", {}).get("validate_max_residual_pix", 25.0)))
+    pyramid_mode: str | None = None,
+) -> tuple[list[ExpansionEdge], dict[str, Any]]:
+    angular_gate = float(_cfg_value(cfg, "expand_angular_gate_arcsec", 120.0, pyramid_mode))
+    pixel_gate = float(
+        _cfg_value(
+            cfg,
+            "expand_pixel_gate_pix",
+            cfg.get("match", {}).get("validate_max_residual_pix", 25.0),
+            pyramid_mode,
+        )
+    )
+    expansion_policy = str(_cfg_value(cfg, "expansion_policy", "predicted_xy", pyramid_mode))
+    geometry_only_allowed = bool(_cfg_value(cfg, "geometry_only_allowed", False, pyramid_mode))
+    if expansion_policy == "seed_attitude_only" and not geometry_only_allowed:
+        expansion_policy = "predicted_xy"
     angular_sigma = max(angular_gate, 1.0)
     pixel_sigma = max(pixel_gate, 1.0)
-    audit: dict[str, float | int] = {
+    seed_consistency_penalty = float(_cfg_value(cfg, "seed_consistency_penalty", 1.0e-6, pyramid_mode))
+    seed_pairs = set(zip(seed.observed_indices, seed.reference_indices))
+    photometric_rank_weight = float(_cfg_value(cfg, "photometric_rank_weight", 0.0, pyramid_mode))
+    observed_ranks = _observed_brightness_ranks(observed_stars)
+    reference_ranks = _reference_brightness_ranks(reference_stars)
+    rank_count = max(len(observed_stars), len(reference_stars))
+    audit: dict[str, Any] = {
+        "expansion_policy": expansion_policy,
+        "geometry_only_allowed": geometry_only_allowed,
         "pixel_gate_pix": pixel_gate,
         "angular_gate_arcsec": angular_gate,
+        "seed_consistency_penalty": seed_consistency_penalty,
+        "photometric_rank_weight": photometric_rank_weight,
         "num_missing_predicted_xy": 0,
         "num_pixel_gate_rejects": 0,
         "num_angular_gate_rejects": 0,
@@ -447,20 +511,50 @@ def _build_expansion_edges(
     edges: list[ExpansionEdge] = []
     for obs_index, obs in enumerate(observed_stars):
         for ref_index, ref in enumerate(reference_stars):
-            pixel_residual, predicted_xy = _predicted_pixel_residual(obs, ref)
-            if pixel_residual is None:
-                audit["num_missing_predicted_xy"] += 1
-                continue
-            if pixel_residual > pixel_gate:
-                audit["num_pixel_gate_rejects"] += 1
-                continue
+            pixel_residual = None
+            predicted_xy = None
+            if expansion_policy == "predicted_xy":
+                pixel_residual, predicted_xy = _predicted_pixel_residual(obs, ref)
+                if pixel_residual is None:
+                    audit["num_missing_predicted_xy"] += 1
+                    continue
+                if pixel_residual > pixel_gate:
+                    audit["num_pixel_gate_rejects"] += 1
+                    continue
+
             ref_body = seed.c_ib @ np.asarray(ref.los_inertial, dtype=np.float64)
             angular_residual = _angle_arcsec(ref_body, obs.los_body)
             if angular_residual > angular_gate:
                 audit["num_angular_gate_rejects"] += 1
                 continue
-            cost = (angular_residual / angular_sigma) + (pixel_residual / pixel_sigma)
-            edges.append((float(cost), obs_index, ref_index, float(angular_residual), pixel_residual, predicted_xy))
+
+            if expansion_policy == "predicted_xy":
+                cost = (angular_residual / angular_sigma) + (pixel_residual / pixel_sigma)
+            elif expansion_policy == "seed_attitude_only":
+                cost = angular_residual / angular_sigma
+            else:
+                raise ValueError(f"unsupported local pyramid expansion_policy: {expansion_policy}")
+            photometric_penalty = _photometric_rank_penalty(
+                obs_index,
+                ref_index,
+                observed_ranks,
+                reference_ranks,
+                rank_count,
+            )
+            cost += photometric_rank_weight * photometric_penalty
+            if (obs_index, ref_index) not in seed_pairs:
+                cost += seed_consistency_penalty
+            edges.append(
+                (
+                    float(cost),
+                    obs_index,
+                    ref_index,
+                    float(angular_residual),
+                    pixel_residual,
+                    predicted_xy,
+                    photometric_penalty,
+                )
+            )
     audit["num_edges_before_assignment"] = len(edges)
     return edges, audit
 
@@ -514,7 +608,7 @@ def _build_matched_stars(
     reference_stars: list[ReferenceStar],
 ) -> list[MatchedStar]:
     matched: list[MatchedStar] = []
-    for cost, obs_index, ref_index, angular_residual, pixel_residual, predicted_xy in assigned_edges:
+    for cost, obs_index, ref_index, angular_residual, pixel_residual, predicted_xy, photometric_penalty in assigned_edges:
         obs = observed_stars[obs_index]
         ref = reference_stars[ref_index]
         matched.append(
@@ -534,6 +628,8 @@ def _build_matched_stars(
                     "seed_rms_arcsec": seed.seed_rms_arcsec,
                     "residual_arcsec": angular_residual,
                     "residual_pix": pixel_residual,
+                    "assignment_cost": cost,
+                    "photometric_rank_penalty": photometric_penalty,
                     "observed_xy": (obs.x, obs.y),
                     "predicted_xy": predicted_xy,
                 },
@@ -542,7 +638,11 @@ def _build_matched_stars(
     return matched
 
 
-def _per_detector_residuals(matched: list[MatchedStar]) -> dict[str, dict[str, float | int | str]]:
+def _per_detector_residuals(
+    matched: list[MatchedStar],
+    cfg: dict | None = None,
+    pyramid_mode: str | None = None,
+) -> dict[str, dict[str, float | int | str]]:
     residuals: dict[str, list[tuple[float, float, float]]] = defaultdict(list)
     for star in matched:
         predicted_xy = star.flags.get("predicted_xy")
@@ -554,17 +654,65 @@ def _per_detector_residuals(matched: list[MatchedStar]) -> dict[str, dict[str, f
         residuals[str(star.detector_id)].append((dx, dy, float(np.hypot(dx, dy))))
 
     payload: dict[str, dict[str, float | int | str]] = {}
+    warn_gate = np.inf
+    mean_reject_gate = np.inf
+    rms_reject_gate = np.inf
+    max_reject_gate = np.inf
+    if cfg is not None:
+        warn_gate = float(_cfg_value(cfg, "detector_mean_warn_pix", np.inf, pyramid_mode))
+        mean_reject_gate = float(_cfg_value(cfg, "detector_mean_reject_pix", np.inf, pyramid_mode))
+        rms_reject_gate = float(_cfg_value(cfg, "detector_rms_reject_pix", np.inf, pyramid_mode))
+        max_reject_gate = float(_cfg_value(cfg, "detector_max_reject_pix", np.inf, pyramid_mode))
+
     for detector_id, values in residuals.items():
         arr = np.asarray(values, dtype=np.float64)
+        mean_dx = float(np.mean(arr[:, 0]))
+        mean_dy = float(np.mean(arr[:, 1]))
+        mean_norm = float(np.hypot(mean_dx, mean_dy))
+        rms = float(np.sqrt(np.mean(np.square(arr[:, 2]))))
+        max_residual = float(np.max(arr[:, 2]))
+        status = "ok"
+        if mean_norm > mean_reject_gate or rms > rms_reject_gate or max_residual > max_reject_gate:
+            status = "reject"
+        elif mean_norm > warn_gate:
+            status = "warn"
         payload[detector_id] = {
             "num_matches": int(arr.shape[0]),
-            "mean_dx_pix": float(np.mean(arr[:, 0])),
-            "mean_dy_pix": float(np.mean(arr[:, 1])),
-            "rms_pix": float(np.sqrt(np.mean(np.square(arr[:, 2])))),
-            "max_pix": float(np.max(arr[:, 2])),
-            "status": "ok",
+            "mean_dx_pix": mean_dx,
+            "mean_dy_pix": mean_dy,
+            "mean_norm_pix": mean_norm,
+            "rms_pix": rms,
+            "max_pix": max_residual,
+            "status": status,
         }
     return payload
+
+
+def _detector_residual_rejection(
+    per_detector_residuals: dict[str, dict[str, float | int | str]],
+    cfg: dict,
+    seed_scope: str,
+    pyramid_mode: str | None = None,
+) -> tuple[bool, list[str]]:
+    reject_ids = [
+        detector_id
+        for detector_id, payload in per_detector_residuals.items()
+        if payload.get("status") == "reject"
+    ]
+    if reject_ids:
+        return True, reject_ids
+
+    reject_mixed_warning = bool(_cfg_value(cfg, "mixed_detector_reject_on_detector_warning", False, pyramid_mode))
+    if seed_scope == "mixed_detector" and reject_mixed_warning:
+        warn_ids = [
+            detector_id
+            for detector_id, payload in per_detector_residuals.items()
+            if payload.get("status") == "warn"
+        ]
+        if warn_ids:
+            return True, warn_ids
+
+    return False, []
 
 
 def _build_seed_debug(
@@ -591,6 +739,24 @@ def _build_seed_debug(
     }
 
 
+def _hypothesis_mapping_key(matched: list[MatchedStar]) -> tuple[tuple[int, int], ...]:
+    return tuple((int(match.source_id), int(match.catalog_id)) for match in matched)
+
+
+def _mean_assignment_cost(matched: list[MatchedStar]) -> float:
+    costs = [
+        float(match.flags["assignment_cost"])
+        for match in matched
+        if match.flags.get("assignment_cost") is not None
+    ]
+    return float(np.mean(costs)) if costs else 0.0
+
+
+def _hypothesis_score(matched: list[MatchedStar], seed: SeedSolution, seed_rms_gate: float) -> float:
+    seed_scale = max(float(seed_rms_gate), 1.0)
+    return (float(len(matched)) * 1000.0) - _mean_assignment_cost(matched) - (seed.seed_rms_arcsec / seed_scale)
+
+
 def _build_result(
     observed_stars: list[ObservedStar],
     reference_stars: list[ReferenceStar],
@@ -606,7 +772,9 @@ def _build_result(
         for star in matched
         if star.flags.get("residual_pix") is not None
     ]
-    per_detector_residuals = _per_detector_residuals(matched)
+    per_detector_residuals = debug.get("best_per_detector_residuals") if matched else None
+    if per_detector_residuals is None:
+        per_detector_residuals = _per_detector_residuals(matched, cfg)
     debug = {
         **debug,
         "num_matched": len(matched),
@@ -638,7 +806,10 @@ def match_local_pyramid(
     reference_stars: list[ReferenceStar],
     cfg: dict,
     cache: LocalPyramidCache | None = None,
+    pyramid_mode: str | None = None,
 ) -> MatchingResult:
+    if pyramid_mode is None:
+        pyramid_mode = cfg.get("match", {}).get("mode", cfg.get("project", {}).get("mode", "init"))
     if cache is not None:
         cache.reset_stats()
     empty_pair_index_cache = {"hits": 0, "misses": 0, "build_time_s": 0.0}
@@ -646,6 +817,7 @@ def match_local_pyramid(
     debug = {
         "algorithm": cfg.get("match", {}).get("algorithm", "local_pyramid"),
         "selected_strategy": "local_pyramid",
+        "pyramid_mode": pyramid_mode,
         "pyramid_enabled": True,
         "num_observed_input": len(observed_stars),
         "num_reference_input": len(reference_stars),
@@ -658,11 +830,16 @@ def match_local_pyramid(
         "best_seed": None,
         "best_expansion": None,
         "best_expanded_matches": 0,
+        "num_valid_seed_hypotheses": 0,
+        "ambiguity_margin": None,
+        "ambiguous": False,
+        "second_best_seed": None,
         "seed_rejection_counters": {
             "edge_limit": 0,
             "seed_rms_gate": 0,
             "seed_max_gate": 0,
             "under_min_expanded": 0,
+            "detector_residual": 0,
         },
         "rejection_reason": None,
         "fallback_strategy": None,
@@ -697,18 +874,23 @@ def match_local_pyramid(
 
     scopes = list(_cfg_value(cfg, "seed_scopes", ["single_detector", "mixed_detector"]))
     debug["pyramid_seed_scope_order"] = scopes
-    max_observed_pyramids = int(_cfg_value(cfg, "max_observed_pyramids", 5000) or 0)
-    max_candidates_per_seed = int(_cfg_value(cfg, "max_candidates_per_observed_seed", 200) or 0)
-    max_seed_attitudes = int(_cfg_value(cfg, "max_seed_attitudes", 2000) or 0)
-    seed_rms_gate = float(_cfg_value(cfg, "seed_rms_gate_arcsec", 60.0))
-    seed_max_gate = float(_cfg_value(cfg, "seed_max_gate_arcsec", 180.0))
-    min_expanded = int(_cfg_value(cfg, "min_expanded_matches", cfg.get("match", {}).get("validate_min_support", 3)))
+    max_observed_pyramids = int(_cfg_value(cfg, "max_observed_pyramids", 5000, pyramid_mode) or 0)
+    max_candidates_per_seed = int(_cfg_value(cfg, "max_candidates_per_observed_seed", 200, pyramid_mode) or 0)
+    max_seed_attitudes = int(_cfg_value(cfg, "max_seed_attitudes", 2000, pyramid_mode) or 0)
+    seed_rms_gate = float(_cfg_value(cfg, "seed_rms_gate_arcsec", 60.0, pyramid_mode))
+    seed_max_gate = float(_cfg_value(cfg, "seed_max_gate_arcsec", 180.0, pyramid_mode))
+    min_expanded = int(_cfg_value(cfg, "min_expanded_matches", cfg.get("match", {}).get("validate_min_support", 3), pyramid_mode))
+    ambiguity_min_score_margin = float(_cfg_value(cfg, "ambiguity_min_score_margin", 1.0, pyramid_mode))
 
     best_payload = None
+    valid_hypotheses: list[HypothesisPayload] = []
+    best_rejected_detector_payload: HypothesisPayload | None = None
+    best_rejected_detector_residuals: dict[str, dict[str, float | int | str]] | None = None
+    best_rejected_detector_ids: list[str] = []
     for scope in scopes:
         tol_key = "pair_angle_tol_arcsec_mixed_detector" if scope == "mixed_detector" else "pair_angle_tol_arcsec_single_detector"
-        tolerance = _arcsec_to_rad(float(_cfg_value(cfg, tol_key, 300.0 if scope == "mixed_detector" else 120.0)))
-        scope_best = None
+        tolerance = _arcsec_to_rad(float(_cfg_value(cfg, tol_key, 300.0 if scope == "mixed_detector" else 120.0, pyramid_mode)))
+        scope_hypotheses_by_mapping: dict[tuple[tuple[int, int], ...], HypothesisPayload] = {}
         for obs_seed in _iter_observed_pyramids(selected_observed, scope, max_observed_pyramids):
             debug["num_observed_pyramids_tested"] += 1
             pair_angles = _seed_pair_angles(selected_observed, obs_seed)
@@ -744,42 +926,104 @@ def match_local_pyramid(
                     continue
                 seed.observed_indices = tuple(selected_observed_indices[index] for index in obs_seed)
                 seed.reference_indices = original_ref_seed
-                edges, expansion_debug = _build_expansion_edges(seed, observed_stars, reference_stars, cfg)
+                edges, expansion_debug = _build_expansion_edges(seed, observed_stars, reference_stars, cfg, pyramid_mode)
                 assigned = _assign_expansion_edges(edges, observed_stars)
                 expansion_debug["num_edges_after_assignment"] = len(assigned)
                 matched = _build_matched_stars(seed, assigned, observed_stars, reference_stars)
                 if len(matched) < min_expanded:
                     debug["seed_rejection_counters"]["under_min_expanded"] += 1
                     continue
+                per_detector_residuals = _per_detector_residuals(matched, cfg, pyramid_mode)
+                detector_rejected, detector_ids = _detector_residual_rejection(
+                    per_detector_residuals,
+                    cfg,
+                    seed.seed_scope,
+                    pyramid_mode,
+                )
+                expansion_debug["per_detector_residuals"] = per_detector_residuals
+                expansion_debug["detector_residual_reject_ids"] = detector_ids
                 residuals = [
                     float(star.flags["residual_pix"])
                     for star in matched
                     if star.flags.get("residual_pix") is not None
                 ]
-                rms_pix = float(np.sqrt(np.mean(np.square(residuals)))) if residuals else np.inf
+                rms_pix = float(np.sqrt(np.mean(np.square(residuals)))) if residuals else 0.0
                 rank = (len(matched), -rms_pix, -seed.seed_rms_arcsec)
-                payload = (rank, seed, matched, expansion_debug)
-                if scope_best is None or rank > scope_best[0]:
-                    scope_best = payload
+                score = _hypothesis_score(matched, seed, seed_rms_gate)
+                payload = (score, rank, seed, matched, expansion_debug)
+                if detector_rejected:
+                    debug["seed_rejection_counters"]["detector_residual"] += 1
+                    if best_rejected_detector_payload is None or (score, rank) > (
+                        best_rejected_detector_payload[0],
+                        best_rejected_detector_payload[1],
+                    ):
+                        best_rejected_detector_payload = payload
+                        best_rejected_detector_residuals = per_detector_residuals
+                        best_rejected_detector_ids = detector_ids
+                    continue
+                mapping_key = _hypothesis_mapping_key(matched)
+                existing = scope_hypotheses_by_mapping.get(mapping_key)
+                if existing is None or (score, rank) > (existing[0], existing[1]):
+                    scope_hypotheses_by_mapping[mapping_key] = payload
             if max_seed_attitudes > 0 and debug["num_seed_attitudes_scored"] >= max_seed_attitudes:
                 break
-        if scope_best is not None:
-            best_payload = scope_best
+        if scope_hypotheses_by_mapping:
+            valid_hypotheses = sorted(
+                scope_hypotheses_by_mapping.values(),
+                key=lambda item: (item[0], item[1]),
+                reverse=True,
+            )
+            best_payload = valid_hypotheses[0]
             break
 
     if best_payload is None:
+        if best_rejected_detector_payload is not None:
+            _, _, rejected_seed, rejected_matched, rejected_expansion = best_rejected_detector_payload
+            debug["rejection_reason"] = "detector_residual_reject"
+            debug["best_seed_scope"] = rejected_seed.seed_scope
+            debug["best_seed_detector_ids"] = list(rejected_seed.detector_ids)
+            debug["best_seed_rms_arcsec"] = rejected_seed.seed_rms_arcsec
+            debug["best_seed"] = _build_seed_debug(rejected_seed, observed_stars, reference_stars)
+            debug["best_expansion"] = rejected_expansion
+            debug["best_expanded_matches"] = len(rejected_matched)
+            debug["best_per_detector_residuals"] = best_rejected_detector_residuals
+            debug["detector_residual_reject_ids"] = best_rejected_detector_ids
+            if cache is not None:
+                debug["angle_query_cache"] = cache.angle_query_debug()
+            return _build_result(observed_stars, reference_stars, [], cfg, debug)
         debug["rejection_reason"] = "no_valid_pyramid_seed"
         if cache is not None:
             debug["angle_query_cache"] = cache.angle_query_debug()
         return _build_result(observed_stars, reference_stars, [], cfg, debug)
 
-    _, best_seed, matched, best_expansion = best_payload
+    debug["num_valid_seed_hypotheses"] = len(valid_hypotheses)
+    if len(valid_hypotheses) > 1:
+        second_payload = valid_hypotheses[1]
+        margin = max(0.0, best_payload[0] - second_payload[0])
+        debug["ambiguity_margin"] = margin
+        debug["second_best_seed"] = _build_seed_debug(second_payload[2], observed_stars, reference_stars)
+        if ambiguity_min_score_margin > 0.0 and margin < ambiguity_min_score_margin:
+            debug["ambiguous"] = True
+            debug["rejection_reason"] = "ambiguous_seed_hypotheses"
+            best_seed = best_payload[2]
+            debug["best_seed_scope"] = best_seed.seed_scope
+            debug["best_seed_detector_ids"] = list(best_seed.detector_ids)
+            debug["best_seed_rms_arcsec"] = best_seed.seed_rms_arcsec
+            debug["best_seed"] = _build_seed_debug(best_seed, observed_stars, reference_stars)
+            debug["best_expansion"] = best_payload[4]
+            debug["best_expanded_matches"] = len(best_payload[3])
+            if cache is not None:
+                debug["angle_query_cache"] = cache.angle_query_debug()
+            return _build_result(observed_stars, reference_stars, [], cfg, debug)
+
+    _, _, best_seed, matched, best_expansion = best_payload
     debug["best_seed_scope"] = best_seed.seed_scope
     debug["best_seed_detector_ids"] = list(best_seed.detector_ids)
     debug["best_seed_rms_arcsec"] = best_seed.seed_rms_arcsec
     debug["best_seed"] = _build_seed_debug(best_seed, observed_stars, reference_stars)
     debug["best_expansion"] = best_expansion
     debug["best_expanded_matches"] = len(matched)
+    debug["best_per_detector_residuals"] = best_expansion.get("per_detector_residuals")
     if cache is not None:
         debug["angle_query_cache"] = cache.angle_query_debug()
     return _build_result(observed_stars, reference_stars, matched, cfg, debug)

@@ -150,7 +150,7 @@ def test_build_tracking_frame_uses_configured_matching_algorithm(monkeypatch):
         "attitude": {},
         "tracking": {"max_attitude_jump_arcsec": 100.0},
     }
-    called = {"local_pyramid": False, "cache": None}
+    called = {"local_pyramid": False, "cache": None, "pyramid_mode": None}
 
     monkeypatch.setattr("fsglib.pipeline.run_tracking.load_npz_frame", lambda *_args, **_kwargs: raw)
     monkeypatch.setattr("fsglib.pipeline.run_tracking.preprocess_frame", lambda *_args, **_kwargs: pre)
@@ -161,9 +161,10 @@ def test_build_tracking_frame_uses_configured_matching_algorithm(monkeypatch):
         lambda *_args, **_kwargs: (reference, SimpleNamespace(boresight_inertial=np.array([0.0, 0.0, 1.0]))),
     )
 
-    def fake_match_local_pyramid(observed_stars, reference_stars, cfg_arg, cache=None):
+    def fake_match_local_pyramid(observed_stars, reference_stars, cfg_arg, cache=None, pyramid_mode=None):
         called["local_pyramid"] = True
         called["cache"] = cache
+        called["pyramid_mode"] = pyramid_mode
         assert observed_stars is observed
         assert reference_stars is reference
         assert cfg_arg is cfg
@@ -210,6 +211,7 @@ def test_build_tracking_frame_uses_configured_matching_algorithm(monkeypatch):
     assert called["local_pyramid"]
     assert isinstance(models["match_cache"], LocalPyramidCache)
     assert called["cache"] is models["match_cache"]
+    assert called["pyramid_mode"] == "tracking"
     assert frame.matching.debug["algorithm"] == "local_pyramid"
     assert frame.matching.debug["selected_strategy"] == "local_pyramid"
     assert [star.catalog_id for star in frame.matching.matched] == [42]
