@@ -109,6 +109,19 @@ def test_local_pyramid_matches_rotated_reference_stars():
     assert result.debug["best_expanded_matches"] == 5
 
 
+def test_local_pyramid_accepts_string_source_ids():
+    refs = _reference_stars()
+    observed = _observed_from_refs(refs)
+    for star in observed:
+        star.source_id = f"{star.detector_id}:{star.source_id}"
+
+    result = match_local_pyramid(observed, refs, _cfg())
+
+    assert result.success
+    assert [match.source_id for match in result.matched] == [star.source_id for star in observed]
+    assert [match.catalog_id for match in result.matched] == [ref.catalog_id for ref in refs]
+
+
 def test_local_pyramid_reuses_pair_index_cache_for_same_reference_geometry():
     from fsglib.match.pyramid import LocalPyramidCache
 
