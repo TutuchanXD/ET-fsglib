@@ -47,6 +47,19 @@ projection and attitude solver code.
 All three projection models must preserve forward/inverse round trips at the
 detector center, representative edges, and representative corners.
 
+## ET Guide Focal-Plane Adapter
+
+- Guide first-frame workflows use `exact_et_focalplane` geometry only.
+- The adapter asks `et_coord` for exact equatorial `pixel_to_sky()` vectors and
+  then maps them into the fsglib body frame with a fitted
+  `rotation_body_from_eq`.
+- The fitted frame alignment is derived from exact ET field-angle samples. It
+  is not a fallback projection model.
+- ET field `+X` maps to fsglib body `-X`; ET field `+Y` maps to fsglib body
+  `+Y`; optical axis remains `+Z`.
+- If exact ET geometry cannot provide an equatorial vector, guide workflows
+  fail loudly instead of falling back to an approximate geometry path.
+
 ## Attitude
 
 - `C_ib` is the direction cosine matrix that maps inertial vectors into body

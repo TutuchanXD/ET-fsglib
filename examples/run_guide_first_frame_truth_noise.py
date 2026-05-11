@@ -4,7 +4,7 @@
 用途：
 - 不从图像提取质心，而是直接基于 truth detector 质心注入高斯噪声；
 - 走导星首帧联合解算链路，评估理想质心条件下的姿态解算表现；
-- 当前脚本对应历史 truth-noise 版本，仍保留 body_model 近似几何口径。
+- 使用 exact et_focalplane 几何生成 LOS。
 
 使用配置：
 - configs/base.yaml
@@ -48,6 +48,7 @@ def main() -> None:
     solution = result["solution"]
     matching = result["matching"]
     synth = result["synthetic_centroid_model"]
+    geometry_adapter = result["geometry_adapter"]
 
     print("----------------------------------------")
     print("Guide First Frame Truth-Noise Solve:")
@@ -75,8 +76,9 @@ def main() -> None:
     print(f"Local-pyramid matches: {matching.debug.get('num_local_pyramid_matches')}")
     print(f"Mean residual (pix): {matching.debug.get('mean_residual_pix')}")
     print(
-        "Body model fit RMS (arcsec): "
-        f"{result['body_model']['fit_rms_arcsec']:.4f}"
+        "Frame alignment RMS/max (arcsec): "
+        f"{geometry_adapter['frame_alignment_fit_rms_arcsec']:.4f} / "
+        f"{geometry_adapter['frame_alignment_fit_max_arcsec']:.4f}"
     )
     if result["error_audit"].get("enabled", False):
         audit_summary = result["error_audit"]["summary"]
@@ -154,7 +156,7 @@ def main() -> None:
         "reference_count": int(result["reference_count"]),
         "detector_stats": result["detector_stats"],
         "sim_to_detector_map": result["sim_to_detector_map"],
-        "body_model": result["body_model"],
+        "geometry_adapter": geometry_adapter,
         "synthetic_centroid_model": result["synthetic_centroid_model"],
         "error_audit": error_audit_summary,
         "error_audit_detail_path": str(audit_path),

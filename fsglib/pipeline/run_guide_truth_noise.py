@@ -9,13 +9,12 @@ from astropy.table import Table
 from fsglib.attitude.solver import solve_attitude
 from fsglib.common.io import load_npz_frame
 from fsglib.common.types import AttitudeSolveInput, MatchingContext, ObservedStar, StarCandidate
+from fsglib.ephemeris.guide_geometry import build_exact_focalplane_geometry_adapter
 from fsglib.match.pipeline import match_stars
 from fsglib.pipeline.guide_error_audit import compute_guide_error_audit
 from fsglib.pipeline.run_guide_init import (
     _build_reference_stars,
     _build_sim_to_detector_map,
-    _fit_focal_body_model,
-    _focal_mm_to_body_vector,
     _frame_path,
     _guide_entries,
     _load_et_coord,
@@ -95,95 +94,11 @@ def _resolve_truth_detector_xy(truth_star) -> tuple[float | None, float | None]:
     return None, None
 
 
-def _build_geometry_model(cfg: dict, registry, transformer) -> dict[str, Any]:
-    helper_cfg = _helper_cfg(cfg)
-    guide_cfg = cfg["guide_truth_noise"]
-    mode = str(guide_cfg.get("los_geometry_mode", "body_model_proxy"))
-
-    proxy_model = _fit_focal_body_model(helper_cfg, registry, transformer)
-    rotation_body_from_eq = np.asarray(proxy_model["rotation_body_from_eq"], dtype=np.float64)
-
-    if mode == "exact_et_focalplane":
-        return {
-            "mode": mode,
-            "rotation_body_from_eq": rotation_body_from_eq,
-            "frame_alignment_reference_grid_size": int(proxy_model["grid_size"]),
-            "frame_alignment_reference_fit_rms_arcsec": float(proxy_model["fit_rms_arcsec"]),
-            "frame_alignment_reference_fit_max_arcsec": float(proxy_model["fit_max_arcsec"]),
-        }
-
-    proxy_model["mode"] = "body_model_proxy"
-    return proxy_model
-
-
-def _geometry_model_body_vector(
-    geometry_model: dict[str, Any],
-    transformer,
-    detector_id: str,
-    observed_x_pix: float,
-    observed_y_pix: float,
-    transformed=None,
-) -> np.ndarray:
-    mode = str(geometry_model.get("mode", "body_model_proxy"))
-    if mode == "exact_et_focalplane":
-        sky = transformer.pixel_to_sky(
-            detector_id,
-            float(observed_x_pix),
-            float(observed_y_pix),
-            frame="equatorial",
-        )
-        if sky.vector_xyz is None:
-            raise ValueError(f"Missing equatorial vector for detector {detector_id!r} exact geometry mapping.")
-        los_eq = np.asarray(sky.vector_xyz, dtype=np.float64)
-        los_eq /= np.linalg.norm(los_eq)
-        los_body = np.asarray(geometry_model["rotation_body_from_eq"], dtype=np.float64) @ los_eq
-        return los_body / np.linalg.norm(los_body)
-
-    if transformed is None:
-        transformed = transformer.pixel_to_focal(detector_id, observed_x_pix, observed_y_pix)
-    return _focal_mm_to_body_vector(
-        float(transformed.x_mm),
-        float(transformed.y_mm),
-        geometry_model,
-    )
-
-
-def _serialize_geometry_model(geometry_model: dict[str, Any]) -> dict[str, Any]:
-    mode = str(geometry_model.get("mode", "body_model_proxy"))
-    rotation = [
-        [float(value) for value in row]
-        for row in np.asarray(geometry_model["rotation_body_from_eq"], dtype=np.float64)
-    ]
-    if mode == "exact_et_focalplane":
-        return {
-            "mode": mode,
-            "rotation_body_from_eq": rotation,
-            "frame_alignment_reference_grid_size": int(geometry_model["frame_alignment_reference_grid_size"]),
-            "frame_alignment_reference_fit_rms_arcsec": float(
-                geometry_model["frame_alignment_reference_fit_rms_arcsec"]
-            ),
-            "frame_alignment_reference_fit_max_arcsec": float(
-                geometry_model["frame_alignment_reference_fit_max_arcsec"]
-            ),
-        }
-
-    return {
-        "mode": mode,
-        "coeffs": [float(value) for value in geometry_model["coeffs"]],
-        "grid_size": int(geometry_model["grid_size"]),
-        "fit_rms_arcsec": float(geometry_model["fit_rms_arcsec"]),
-        "fit_max_arcsec": float(geometry_model["fit_max_arcsec"]),
-        "rotation_body_from_eq": rotation,
-        "optimization_success": bool(geometry_model["optimization_success"]),
-        "optimization_message": geometry_model["optimization_message"],
-    }
-
-
 def _build_truth_noise_observed(
     cfg: dict,
     transformer,
     sim_to_detector_map: dict[str, dict],
-    geometry_model: dict[str, Any],
+    geometry_adapter,
 ) -> tuple[list[ObservedStar], dict, dict]:
     guide_cfg = cfg["guide_truth_noise"]
     dataset_root = Path(guide_cfg["dataset_root"]).expanduser().resolve()
@@ -304,21 +219,14 @@ def _build_truth_noise_observed(
             observed_y = float(truth_record["truth_detector_y_pix"]) + float(
                 candidate.flags["injected_dy_pix"]
             )
-            transformed = transformer.pixel_to_focal(detector_id, observed_x, observed_y)
+            transformed = geometry_adapter.pixel_to_focal(detector_id, observed_x, observed_y)
             observed.append(
                 ObservedStar(
                     detector_id=detector_id,
                     source_id=f"{detector_id}:{candidate.source_id}",
                     x=observed_x,
                     y=observed_y,
-                    los_body=_geometry_model_body_vector(
-                        geometry_model,
-                        transformer,
-                        detector_id,
-                        observed_x,
-                        observed_y,
-                        transformed=transformed,
-                    ),
+                    los_body=geometry_adapter.pixel_to_body_los(detector_id, observed_x, observed_y),
                     flux=float(candidate.flux),
                     snr=float(candidate.snr),
                     weight=max(float(candidate.snr), 1.0),
@@ -342,7 +250,7 @@ def _build_truth_noise_observed(
 def run_guide_first_frame_truth_noise(cfg: dict) -> dict:
     helper_cfg = _helper_cfg(cfg)
     registry, transformer, catalog, GaiaSourceFilter = _load_et_coord(helper_cfg)
-    geometry_model = _build_geometry_model(cfg, registry, transformer)
+    geometry_adapter = build_exact_focalplane_geometry_adapter(helper_cfg, registry, transformer)
 
     dataset_root = Path(cfg["guide_truth_noise"]["dataset_root"]).expanduser().resolve()
     sim_to_detector_map: dict[str, dict] = {}
@@ -355,7 +263,7 @@ def run_guide_first_frame_truth_noise(cfg: dict) -> dict:
         cfg,
         transformer,
         sim_to_detector_map,
-        geometry_model,
+        geometry_adapter,
     )
     reference, reference_stats = _build_reference_stars(helper_cfg, registry, catalog, GaiaSourceFilter)
 
@@ -385,7 +293,7 @@ def run_guide_first_frame_truth_noise(cfg: dict) -> dict:
         helper_cfg,
         transformer,
         sim_to_detector_map,
-        geometry_model,
+        geometry_adapter,
         detector_contexts,
         observed,
         matching,
@@ -412,6 +320,7 @@ def run_guide_first_frame_truth_noise(cfg: dict) -> dict:
             stats["offset_y_pix"] = sim_to_detector_map[detector_id]["offset_y_pix"]
 
     guide_cfg = cfg["guide_truth_noise"]
+    geometry_payload = geometry_adapter.serialize()
     return {
         "solution": solution,
         "matching": matching,
@@ -443,8 +352,7 @@ def run_guide_first_frame_truth_noise(cfg: dict) -> dict:
             )
             for detector_id, mapping in sim_to_detector_map.items()
         },
-        "geometry_model": _serialize_geometry_model(geometry_model),
-        "body_model": _serialize_geometry_model(geometry_model),
+        "geometry_adapter": geometry_payload,
         "synthetic_centroid_model": {
             "mode": "truth_detector_gaussian",
             "noise_mean_pix": float(guide_cfg.get("centroid_noise_mean_pix", 0.0)),
@@ -452,12 +360,13 @@ def run_guide_first_frame_truth_noise(cfg: dict) -> dict:
             "noise_space": str(guide_cfg.get("centroid_noise_space", "detector_pixel")),
             "random_seed": int(guide_cfg.get("random_seed", 0)),
             "selection_mode": "truth_brightness_proxy",
-            "los_geometry_mode": str(guide_cfg.get("los_geometry_mode", "body_model_proxy")),
+            "los_geometry_mode": str(guide_cfg.get("los_geometry_mode", "exact_et_focalplane")),
         },
         "error_audit": error_audit,
         "meta": {
             "dataset_root": str(dataset_root),
             "frame_index": int(guide_cfg.get("frame_index", 0)),
+            "los_geometry_mode": str(guide_cfg.get("los_geometry_mode", "exact_et_focalplane")),
             "reference_topk_per_detector": int(guide_cfg["reference_topk_per_detector"]),
             "reference_preselect_topk_per_detector": int(
                 guide_cfg.get(

@@ -37,22 +37,13 @@ def _deep_update(base: dict, override: dict) -> dict:
     return merged
 
 
-def _geometry_summary_lines(geometry_model: dict) -> list[str]:
-    mode = str(geometry_model.get("mode", "body_model_proxy"))
-    if mode == "exact_et_focalplane":
-        return [
-            "LOS geometry: exact_et_focalplane",
-            (
-                "Body-frame alignment reference RMS/max (arcsec): "
-                f"{geometry_model['frame_alignment_reference_fit_rms_arcsec']:.4f} / "
-                f"{geometry_model['frame_alignment_reference_fit_max_arcsec']:.4f}"
-            ),
-        ]
+def _geometry_summary_lines(geometry_adapter: dict) -> list[str]:
     return [
-        "LOS geometry: body_model_proxy",
+        f"LOS geometry: {geometry_adapter['mode']}",
         (
-            "Body model fit RMS/max (arcsec): "
-            f"{geometry_model['fit_rms_arcsec']:.4f} / {geometry_model['fit_max_arcsec']:.4f}"
+            "Frame alignment RMS/max (arcsec): "
+            f"{geometry_adapter['frame_alignment_fit_rms_arcsec']:.4f} / "
+            f"{geometry_adapter['frame_alignment_fit_max_arcsec']:.4f}"
         ),
     ]
 
@@ -67,7 +58,7 @@ def main() -> None:
     result = run_guide_first_frame_init(cfg)
     solution = result["solution"]
     matching = result["matching"]
-    geometry_model = result.get("geometry_model", result["body_model"])
+    geometry_adapter = result["geometry_adapter"]
 
     print("----------------------------------------")
     print("Guide First Frame Joint Solve Results:")
@@ -85,7 +76,7 @@ def main() -> None:
     print(f"Predicted-position matches: {matching.debug.get('num_predicted_position_matches')}")
     print(f"Local-pyramid matches: {matching.debug.get('num_local_pyramid_matches')}")
     print(f"Mean residual (pix): {matching.debug.get('mean_residual_pix')}")
-    for line in _geometry_summary_lines(geometry_model):
+    for line in _geometry_summary_lines(geometry_adapter):
         print(line)
     if result["error_audit"].get("enabled", False):
         audit_summary = result["error_audit"]["summary"]
@@ -182,8 +173,7 @@ def main() -> None:
         "reference_count": int(result["reference_count"]),
         "detector_stats": result["detector_stats"],
         "sim_to_detector_map": result["sim_to_detector_map"],
-        "geometry_model": geometry_model,
-        "body_model": result["body_model"],
+        "geometry_adapter": geometry_adapter,
         "error_audit": error_audit_summary,
         "error_audit_detail_path": str(audit_path),
         "meta": result["meta"],
