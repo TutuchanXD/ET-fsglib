@@ -503,7 +503,7 @@ def _build_reference_stars(cfg: dict, registry, catalog, GaiaSourceFilter) -> tu
     return reference, per_detector_stats
 
 
-def run_guide_first_frame_init(cfg: dict) -> dict:
+def run_guide_first_frame_init(cfg: dict, *, include_debug_context: bool = False) -> dict:
     registry, transformer, catalog, GaiaSourceFilter = _load_et_coord(cfg)
     geometry_model = _build_geometry_model(cfg, registry, transformer)
 
@@ -577,7 +577,7 @@ def run_guide_first_frame_init(cfg: dict) -> dict:
         stats["reference_preselect_topk"] = reference_detector_stats["preselect_topk"]
         stats["reference_isolation_radius_pix"] = reference_detector_stats["isolation_radius_pix"]
 
-    return {
+    result = {
         "solution": solution,
         "matching": matching,
         "observed_count": len(observed),
@@ -635,3 +635,21 @@ def run_guide_first_frame_init(cfg: dict) -> dict:
             "max_observed_per_detector": int(cfg["guide_init"].get("max_observed_per_detector", 0)),
         },
     }
+    if include_debug_context:
+        result["debug_context"] = {
+            "detectors": {
+                detector_id: {
+                    "image": context["raw"].image,
+                    "preprocessed_image": context["preprocessed"].image,
+                    "frame_path": context["frame_path"],
+                    "batch_path": context["batch_path"],
+                    "num_candidates_raw": context["num_candidates_raw"],
+                    "num_candidates_selected": context["num_candidates_selected"],
+                }
+                for detector_id, context in detector_contexts.items()
+            },
+            "observed_stars": observed,
+            "reference_stars": reference,
+        }
+
+    return result
