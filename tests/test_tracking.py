@@ -17,6 +17,7 @@ from fsglib.common.types import (
     TrackState,
 )
 from fsglib.ephemeris.types import ReferenceStar
+from fsglib.match.pyramid import LocalPyramidCache
 from fsglib.pipeline.evaluate import evaluate_dataset
 from fsglib.pipeline.run_tracking import _build_tracking_frame, update_state_machine, update_track_table
 
@@ -149,7 +150,7 @@ def test_build_tracking_frame_uses_configured_matching_algorithm(monkeypatch):
         "attitude": {},
         "tracking": {"max_attitude_jump_arcsec": 100.0},
     }
-    called = {"local_pyramid": False}
+    called = {"local_pyramid": False, "cache": None}
 
     monkeypatch.setattr("fsglib.pipeline.run_tracking.load_npz_frame", lambda *_args, **_kwargs: raw)
     monkeypatch.setattr("fsglib.pipeline.run_tracking.preprocess_frame", lambda *_args, **_kwargs: pre)
@@ -160,8 +161,9 @@ def test_build_tracking_frame_uses_configured_matching_algorithm(monkeypatch):
         lambda *_args, **_kwargs: (reference, SimpleNamespace(boresight_inertial=np.array([0.0, 0.0, 1.0]))),
     )
 
-    def fake_match_local_pyramid(observed_stars, reference_stars, cfg_arg):
+    def fake_match_local_pyramid(observed_stars, reference_stars, cfg_arg, cache=None):
         called["local_pyramid"] = True
+        called["cache"] = cache
         assert observed_stars is observed
         assert reference_stars is reference
         assert cfg_arg is cfg
@@ -195,16 +197,19 @@ def test_build_tracking_frame_uses_configured_matching_algorithm(monkeypatch):
     )
     monkeypatch.setattr("fsglib.pipeline.run_tracking.evaluate_frame_result", lambda *_args, **_kwargs: None)
 
+    models = {"projector": object(), "catalog": object()}
     frame = _build_tracking_frame(
         npz_path="frame.npz",
         cfg=cfg,
-        models={"projector": object(), "catalog": object()},
+        models=models,
         dataset_ctx=SimpleNamespace(batch_root="batch0"),
         prior_q=np.array([1.0, 0.0, 0.0, 0.0]),
         track_states={42: TrackState(42, 0, (10.0, 20.0), 0.0)},
     )
 
     assert called["local_pyramid"]
+    assert isinstance(models["match_cache"], LocalPyramidCache)
+    assert called["cache"] is models["match_cache"]
     assert frame.matching.debug["algorithm"] == "local_pyramid"
     assert frame.matching.debug["selected_strategy"] == "local_pyramid"
     assert [star.catalog_id for star in frame.matching.matched] == [42]

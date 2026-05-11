@@ -109,6 +109,63 @@ def test_local_pyramid_matches_rotated_reference_stars():
     assert result.debug["best_expanded_matches"] == 5
 
 
+def test_local_pyramid_reuses_pair_index_cache_for_same_reference_geometry():
+    from fsglib.match.pyramid import LocalPyramidCache
+
+    refs = _reference_stars()
+    observed = _observed_from_refs(refs)
+    cfg = _cfg()
+    cache = LocalPyramidCache()
+
+    first = match_local_pyramid(observed, refs, cfg, cache=cache)
+    second = match_local_pyramid(observed, refs, cfg, cache=cache)
+
+    assert first.success
+    assert second.success
+    assert [match.catalog_id for match in second.matched] == [ref.catalog_id for ref in refs]
+    assert first.debug["pair_index_cache"]["misses"] == 1
+    assert first.debug["pair_index_cache"]["hits"] == 0
+    assert second.debug["pair_index_cache"]["hits"] == 1
+    assert second.debug["pair_index_cache"]["misses"] == 0
+    assert second.debug["pair_index_cache"]["build_time_s"] == 0.0
+
+
+def test_local_pyramid_pair_index_cache_misses_when_reference_los_changes():
+    from fsglib.match.pyramid import LocalPyramidCache
+
+    refs = _reference_stars()
+    observed = _observed_from_refs(refs)
+    cfg = _cfg()
+    cache = LocalPyramidCache()
+
+    first = match_local_pyramid(observed, refs, cfg, cache=cache)
+    shifted_refs = _reference_stars()
+    shifted_refs[0].los_inertial = _unit(-0.05, -0.02)
+    second = match_local_pyramid(observed, shifted_refs, cfg, cache=cache)
+
+    assert first.success
+    assert second.debug["pair_index_cache"]["misses"] == 1
+    assert second.debug["pair_index_cache"]["hits"] == 0
+
+
+def test_local_pyramid_reuses_angle_query_cache_without_changing_matches():
+    from fsglib.match.pyramid import LocalPyramidCache
+
+    refs = _reference_stars()
+    observed = _observed_from_refs(refs)
+    cfg = _cfg()
+    cache = LocalPyramidCache()
+
+    baseline = match_local_pyramid(observed, refs, cfg)
+    first = match_local_pyramid(observed, refs, cfg, cache=cache)
+    second = match_local_pyramid(observed, refs, cfg, cache=cache)
+
+    assert [match.catalog_id for match in first.matched] == [match.catalog_id for match in baseline.matched]
+    assert [match.catalog_id for match in second.matched] == [match.catalog_id for match in baseline.matched]
+    assert first.debug["angle_query_cache"]["misses"] > 0
+    assert second.debug["angle_query_cache"]["hits"] > 0
+
+
 def test_local_pyramid_reports_seed_and_expansion_audit():
     refs = _reference_stars()
     observed = _observed_from_refs(refs, _rotation_z(np.deg2rad(0.2)))
@@ -177,6 +234,34 @@ def test_match_stars_uses_local_pyramid_when_configured():
     assert result.debug["num_predicted_position_matches"] == 5
     assert result.debug["num_local_pyramid_matches"] == 5
     assert result.debug["num_triangle_matches"] == 0
+
+
+def test_match_stars_passes_context_cache_to_local_pyramid():
+    from fsglib.match.pyramid import LocalPyramidCache
+
+    refs = _reference_stars()
+    observed = _observed_from_refs(refs)
+    cfg = _cfg()
+    cache = LocalPyramidCache()
+    ctx = MatchingContext(
+        mode="tracking",
+        time_s=0.0,
+        observed_stars=observed,
+        prior_attitude_q=None,
+        detector_layout={},
+        optical_model={},
+        matching_cfg=cfg["match"],
+        reference_stars=refs,
+        match_cache=cache,
+    )
+
+    first = match_stars(ctx, refs, cfg)
+    second = match_stars(ctx, refs, cfg)
+
+    assert first.success
+    assert second.success
+    assert first.debug["pyramid_debug"]["pair_index_cache"]["misses"] == 1
+    assert second.debug["pyramid_debug"]["pair_index_cache"]["hits"] == 1
 
 
 def test_match_stars_hybrid_keeps_predicted_position_on_equal_support():

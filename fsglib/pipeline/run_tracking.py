@@ -24,6 +24,16 @@ from fsglib.pipeline.run_init import _build_ephemeris_context, run_single_frame_
 from fsglib.preprocess.pipeline import preprocess_frame
 
 
+def _get_match_cache(models: dict):
+    from fsglib.match.pyramid import LocalPyramidCache
+
+    cache = models.get("match_cache")
+    if cache is None:
+        cache = LocalPyramidCache()
+        models["match_cache"] = cache
+    return cache
+
+
 def _copy_state(state: SolveStateMachine) -> SolveStateMachine:
     return deepcopy(state)
 
@@ -183,6 +193,7 @@ def _build_tracking_frame(
         matching_cfg=cfg.get("match", {}),
         boresight_inertial=eph_ctx.boresight_inertial,
         reference_stars=ref,
+        match_cache=_get_match_cache(models),
     )
     matching = match_stars(match_ctx, ref, cfg)
     matching.mode = "tracking"

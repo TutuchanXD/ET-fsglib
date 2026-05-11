@@ -115,6 +115,7 @@ class MatchingContext:
     matching_cfg: dict
     boresight_inertial: np.ndarray | None = None
     reference_stars: list[Any] = field(default_factory=list)
+    match_cache: Any | None = None
 
 @dataclass
 class MatchingResult:

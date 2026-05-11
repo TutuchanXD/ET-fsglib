@@ -19,6 +19,16 @@ from fsglib.pipeline.evaluate import evaluate_frame_result
 from fsglib.preprocess.pipeline import preprocess_frame
 
 
+def _get_match_cache(models: dict):
+    from fsglib.match.pyramid import LocalPyramidCache
+
+    cache = models.get("match_cache")
+    if cache is None:
+        cache = LocalPyramidCache()
+        models["match_cache"] = cache
+    return cache
+
+
 def _coarse_attitude_from_boresight(boresight_inertial: np.ndarray) -> np.ndarray:
     boresight = np.asarray(boresight_inertial, dtype=np.float64)
     boresight /= np.linalg.norm(boresight)
@@ -159,6 +169,7 @@ def run_single_frame_init(
         matching_cfg=cfg.get("match", {}),
         boresight_inertial=eph_ctx.boresight_inertial,
         reference_stars=ref,
+        match_cache=_get_match_cache(models),
     )
     matching = match_stars(match_ctx, ref, cfg)
     timings["match"] = perf_counter() - t0
