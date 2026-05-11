@@ -16,5 +16,7 @@ dist/
 outputs/
 data/
 plan/
+lis_indexes/
+*.lis_index.npz
 
 .DS_Store
