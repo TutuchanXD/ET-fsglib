@@ -13,20 +13,11 @@ from fsglib.common.types import (
 from fsglib.ephemeris.pipeline import build_reference_stars
 from fsglib.ephemeris.types import EphemerisContext
 from fsglib.extract.pipeline import extract_stars
+from fsglib.match.cache import get_match_cache
 from fsglib.match.pipeline import match_stars
 from fsglib.pipeline.convert import candidates_to_observed
 from fsglib.pipeline.evaluate import evaluate_frame_result
 from fsglib.preprocess.pipeline import preprocess_frame
-
-
-def _get_match_cache(models: dict):
-    from fsglib.match.pyramid import LocalPyramidCache
-
-    cache = models.get("match_cache")
-    if cache is None:
-        cache = LocalPyramidCache()
-        models["match_cache"] = cache
-    return cache
 
 
 def _coarse_attitude_from_boresight(boresight_inertial: np.ndarray) -> np.ndarray:
@@ -169,7 +160,7 @@ def run_single_frame_init(
         matching_cfg=cfg.get("match", {}),
         boresight_inertial=eph_ctx.boresight_inertial,
         reference_stars=ref,
-        match_cache=_get_match_cache(models),
+        match_cache=get_match_cache(models, cfg),
     )
     matching = match_stars(match_ctx, ref, cfg)
     timings["match"] = perf_counter() - t0

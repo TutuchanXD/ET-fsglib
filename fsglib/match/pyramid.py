@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import itertools
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
@@ -45,8 +45,10 @@ def _reference_cache_key(reference_stars: list[ReferenceStar]) -> tuple:
 
 @dataclass
 class LocalPyramidCache:
-    pair_index_by_key: dict[tuple, LocalPairIndex] = field(default_factory=dict)
-    query_pairs_by_key: dict[tuple[int, int, float], list[ReferencePair]] = field(default_factory=dict)
+    max_pair_indices: int = 8
+    max_query_entries: int = 4096
+    pair_index_by_key: OrderedDict[tuple, LocalPairIndex] = field(default_factory=OrderedDict)
+    query_pairs_by_key: OrderedDict[tuple[int, int, float], list[ReferencePair]] = field(default_factory=OrderedDict)
     pair_index_hits: int = 0
     pair_index_misses: int = 0
     pair_index_build_time_s: float = 0.0
@@ -62,17 +64,50 @@ class LocalPyramidCache:
         self.query_misses = 0
         self.query_time_s = 0.0
 
+    def clear(self) -> None:
+        self.pair_index_by_key.clear()
+        self.query_pairs_by_key.clear()
+        self.reset_stats()
+
+    def _drop_query_entries_for_pair_index(self, pair_index: LocalPairIndex) -> None:
+        pair_index_id = id(pair_index)
+        stale_keys = [
+            key
+            for key in self.query_pairs_by_key
+            if key[0] == pair_index_id
+        ]
+        for key in stale_keys:
+            self.query_pairs_by_key.pop(key, None)
+
+    def _enforce_pair_index_limit(self) -> None:
+        if self.max_pair_indices <= 0:
+            self.clear()
+            return
+        while len(self.pair_index_by_key) > self.max_pair_indices:
+            _, evicted_pair_index = self.pair_index_by_key.popitem(last=False)
+            self._drop_query_entries_for_pair_index(evicted_pair_index)
+
+    def _enforce_query_limit(self) -> None:
+        if self.max_query_entries <= 0:
+            self.query_pairs_by_key.clear()
+            return
+        while len(self.query_pairs_by_key) > self.max_query_entries:
+            self.query_pairs_by_key.popitem(last=False)
+
     def get_pair_index(self, reference_stars: list[ReferenceStar]) -> LocalPairIndex:
         key = _reference_cache_key(reference_stars)
         if key in self.pair_index_by_key:
             self.pair_index_hits += 1
+            self.pair_index_by_key.move_to_end(key)
             return self.pair_index_by_key[key]
 
         self.pair_index_misses += 1
         start = perf_counter()
         pair_index = _build_local_pair_index(reference_stars)
         self.pair_index_build_time_s += perf_counter() - start
-        self.pair_index_by_key[key] = pair_index
+        if self.max_pair_indices > 0:
+            self.pair_index_by_key[key] = pair_index
+            self._enforce_pair_index_limit()
         return pair_index
 
     def query_pairs(self, pair_index: LocalPairIndex, angle_rad: float, tolerance_rad: float) -> list[ReferencePair]:
@@ -83,6 +118,7 @@ class LocalPyramidCache:
         key = (id(pair_index), bin_index, rounded_tolerance)
         if key in self.query_pairs_by_key:
             self.query_hits += 1
+            self.query_pairs_by_key.move_to_end(key)
             candidates = self.query_pairs_by_key[key]
         else:
             self.query_misses += 1
@@ -93,7 +129,9 @@ class LocalPyramidCache:
             start_index = int(np.searchsorted(pair_index.angles_rad, lo, side="left"))
             stop_index = int(np.searchsorted(pair_index.angles_rad, hi, side="right"))
             candidates = pair_index.pairs[start_index:stop_index]
-            self.query_pairs_by_key[key] = candidates
+            if self.max_query_entries > 0:
+                self.query_pairs_by_key[key] = candidates
+                self._enforce_query_limit()
 
         exact = [
             pair
@@ -603,6 +641,8 @@ def match_local_pyramid(
 ) -> MatchingResult:
     if cache is not None:
         cache.reset_stats()
+    empty_pair_index_cache = {"hits": 0, "misses": 0, "build_time_s": 0.0}
+    empty_angle_query_cache = {"hits": 0, "misses": 0, "query_time_s": 0.0}
     debug = {
         "algorithm": cfg.get("match", {}).get("algorithm", "local_pyramid"),
         "selected_strategy": "local_pyramid",
@@ -626,6 +666,8 @@ def match_local_pyramid(
         },
         "rejection_reason": None,
         "fallback_strategy": None,
+        "pair_index_cache": empty_pair_index_cache,
+        "angle_query_cache": empty_angle_query_cache,
     }
 
     if len(observed_stars) < 4:
@@ -647,11 +689,6 @@ def match_local_pyramid(
             "hits": 0,
             "misses": 1,
             "build_time_s": perf_counter() - pair_index_start,
-        }
-        debug["angle_query_cache"] = {
-            "hits": 0,
-            "misses": 0,
-            "query_time_s": 0.0,
         }
     else:
         pair_index = cache.get_pair_index(selected_reference)

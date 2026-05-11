@@ -166,6 +166,64 @@ def test_local_pyramid_reuses_angle_query_cache_without_changing_matches():
     assert second.debug["angle_query_cache"]["hits"] > 0
 
 
+def test_local_pyramid_cached_early_return_reports_cache_debug():
+    from fsglib.match.pyramid import LocalPyramidCache
+
+    refs = _reference_stars()
+    observed = _observed_from_refs(refs)[:3]
+
+    result = match_local_pyramid(observed, refs, _cfg(), cache=LocalPyramidCache())
+
+    assert not result.success
+    assert result.debug["rejection_reason"] == "not_enough_observed_stars"
+    assert result.debug["pair_index_cache"] == {"hits": 0, "misses": 0, "build_time_s": 0.0}
+    assert result.debug["angle_query_cache"] == {"hits": 0, "misses": 0, "query_time_s": 0.0}
+
+
+def test_local_pyramid_cache_clear_removes_pair_and_query_entries():
+    from fsglib.match.pyramid import LocalPyramidCache
+
+    refs = _reference_stars()
+    observed = _observed_from_refs(refs)
+    cache = LocalPyramidCache()
+
+    result = match_local_pyramid(observed, refs, _cfg(), cache=cache)
+
+    assert result.success
+    assert len(cache.pair_index_by_key) == 1
+    assert len(cache.query_pairs_by_key) > 0
+
+    cache.clear()
+
+    assert cache.pair_index_by_key == {}
+    assert cache.query_pairs_by_key == {}
+    assert cache.pair_index_hits == 0
+    assert cache.query_hits == 0
+
+
+def test_local_pyramid_cache_evicts_pair_indices_and_related_queries():
+    from fsglib.match.pyramid import LocalPyramidCache
+
+    refs = _reference_stars()
+    observed = _observed_from_refs(refs)
+    cache = LocalPyramidCache(max_pair_indices=1, max_query_entries=2)
+
+    first = match_local_pyramid(observed, refs, _cfg(), cache=cache)
+    old_pair_index_ids = {id(pair_index) for pair_index in cache.pair_index_by_key.values()}
+
+    shifted_refs = _reference_stars()
+    for index, ref in enumerate(shifted_refs):
+        ref.catalog_id = 3000 + index
+    second = match_local_pyramid(observed, shifted_refs, _cfg(), cache=cache)
+
+    assert first.success
+    assert len(cache.pair_index_by_key) == 1
+    assert all(id(pair_index) not in old_pair_index_ids for pair_index in cache.pair_index_by_key.values())
+    assert all(pair_index_id not in old_pair_index_ids for pair_index_id, _, _ in cache.query_pairs_by_key)
+    assert len(cache.query_pairs_by_key) <= cache.max_query_entries
+    assert second.debug["pair_index_cache"]["misses"] == 1
+
+
 def test_local_pyramid_reports_seed_and_expansion_audit():
     refs = _reference_stars()
     observed = _observed_from_refs(refs, _rotation_z(np.deg2rad(0.2)))
