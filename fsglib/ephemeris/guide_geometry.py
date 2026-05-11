@@ -85,7 +85,16 @@ class ExactFocalPlaneGeometryAdapter:
                 f"Missing equatorial vector for detector {detector_id!r} "
                 f"at pixel ({float(x_pix)}, {float(y_pix)}); status={status!r}."
             )
-        return self.inertial_to_body_los(np.asarray(vector_xyz, dtype=np.float64))
+        try:
+            los_eq = _normalize_vector(vector_xyz, label="equatorial vector")
+        except (TypeError, ValueError) as exc:
+            status = getattr(sky, "status", "unknown")
+            raise ValueError(
+                f"Invalid equatorial vector for detector {detector_id!r} "
+                f"at pixel ({float(x_pix)}, {float(y_pix)}); status={status!r}: {exc}"
+            ) from exc
+        los_body = self.rotation_body_from_eq @ los_eq
+        return _normalize_vector(los_body, label="los_body")
 
     def serialize(self) -> dict[str, Any]:
         return {
@@ -143,7 +152,15 @@ def _sample_alignment_vectors(registry, transformer, detector_ids: tuple[str, ..
                     )
 
                 body_vectors.append(et_field_angles_to_body_vector(field_x_deg, field_y_deg))
-                inertial_vectors.append(_normalize_vector(vector_xyz, label="alignment vector"))
+                try:
+                    inertial_vector = _normalize_vector(vector_xyz, label="alignment vector")
+                except (TypeError, ValueError) as exc:
+                    status = getattr(sky, "status", "unknown")
+                    raise ValueError(
+                        f"Invalid equatorial alignment vector for detector {detector_id!r} "
+                        f"at pixel ({float(x_pix)}, {float(y_pix)}); status={status!r}: {exc}"
+                    ) from exc
+                inertial_vectors.append(inertial_vector)
 
     return body_vectors, inertial_vectors
 

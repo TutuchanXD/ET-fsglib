@@ -27,6 +27,10 @@ class FakeTransformer:
     def __init__(self, rotation_body_from_eq):
         self.rotation_body_from_eq = np.asarray(rotation_body_from_eq, dtype=np.float64)
         self.missing_pixel_sky = False
+        self.pixel_sky_vector_xyz = None
+        self.pixel_sky_status = "ok"
+        self.focal_sky_vector_xyz = None
+        self.focal_sky_status = "ok"
 
     @staticmethod
     def _field_angles(xpix, ypix):
@@ -46,6 +50,12 @@ class FakeTransformer:
         )
 
     def focal_to_sky(self, detector_id, x_mm, y_mm, *, frame="equatorial"):
+        if self.focal_sky_vector_xyz is not None:
+            return SimpleNamespace(
+                status=self.focal_sky_status,
+                frame=frame,
+                vector_xyz=self.focal_sky_vector_xyz,
+            )
         xpix = float(x_mm) / 0.0065 + 50.0
         ypix = float(y_mm) / 0.0065 + 40.0
         field_x_deg, field_y_deg = self._field_angles(xpix, ypix)
@@ -56,6 +66,12 @@ class FakeTransformer:
     def pixel_to_sky(self, detector_id, xpix, ypix, *, frame="equatorial"):
         if self.missing_pixel_sky:
             return SimpleNamespace(status="error", frame=frame, vector_xyz=None)
+        if self.pixel_sky_vector_xyz is not None:
+            return SimpleNamespace(
+                status=self.pixel_sky_status,
+                frame=frame,
+                vector_xyz=self.pixel_sky_vector_xyz,
+            )
         focal = self.pixel_to_focal(detector_id, xpix, ypix)
         return self.focal_to_sky(detector_id, focal.x_mm, focal.y_mm, frame=frame)
 
@@ -107,3 +123,36 @@ def test_exact_adapter_fails_when_pixel_to_sky_has_no_equatorial_vector():
 
     with pytest.raises(ValueError, match="Missing equatorial vector"):
         adapter.pixel_to_body_los("G1", 50.0, 40.0)
+
+
+def test_exact_adapter_reports_context_for_invalid_pixel_to_sky_vector():
+    transformer = FakeTransformer(np.eye(3))
+    adapter = build_exact_focalplane_geometry_adapter(_cfg(), FakeRegistry(), transformer)
+    transformer.pixel_sky_vector_xyz = (np.nan, 0.0, 1.0)
+    transformer.pixel_sky_status = "nonfinite"
+
+    with pytest.raises(ValueError) as exc_info:
+        adapter.pixel_to_body_los("G1", 50.0, 40.0)
+
+    message = str(exc_info.value)
+    assert "Invalid equatorial vector" in message
+    assert "detector 'G1'" in message
+    assert "pixel (50.0, 40.0)" in message
+    assert "status='nonfinite'" in message
+    assert "finite 3-vector" in message
+
+
+def test_exact_adapter_reports_context_for_invalid_alignment_vector():
+    transformer = FakeTransformer(np.eye(3))
+    transformer.focal_sky_vector_xyz = (np.nan, 0.0, 1.0)
+    transformer.focal_sky_status = "nonfinite-align"
+
+    with pytest.raises(ValueError) as exc_info:
+        build_exact_focalplane_geometry_adapter(_cfg(), FakeRegistry(), transformer)
+
+    message = str(exc_info.value)
+    assert "Invalid equatorial alignment vector" in message
+    assert "detector 'G1'" in message
+    assert "pixel (0.0, 0.0)" in message
+    assert "status='nonfinite-align'" in message
+    assert "finite 3-vector" in message
