@@ -353,7 +353,6 @@ def run_guide_first_frame_truth_noise(cfg: dict) -> dict:
             for detector_id, mapping in sim_to_detector_map.items()
         },
         "geometry_adapter": geometry_payload,
-        "geometry_model": geometry_payload,
         "synthetic_centroid_model": {
             "mode": "truth_detector_gaussian",
             "noise_mean_pix": float(guide_cfg.get("centroid_noise_mean_pix", 0.0)),

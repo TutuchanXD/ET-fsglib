@@ -419,7 +419,6 @@ def run_guide_first_frame_init(cfg: dict, *, include_debug_context: bool = False
             for detector_id, mapping in sim_to_detector_map.items()
         },
         "geometry_adapter": geometry_payload,
-        "geometry_model": geometry_payload,
         "error_audit": error_audit,
         "meta": {
             "dataset_root": str(dataset_root),

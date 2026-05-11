@@ -107,14 +107,13 @@ __Version：1.0.0__
 - `detector_stats`
 - `sim_to_detector_map`
 - `geometry_adapter`
-- `geometry_model`
 - `error_audit`
 - `meta`
 
 说明：
 
 - 先建立 sim 坐标到 `et_focalplane` detector 坐标的桥接，再通过 exact ET focal-plane adapter 做像点转 LOS；
-- `geometry_model` 是 `geometry_adapter` 的兼容别名；`body_model` 已移除。
+- `geometry_adapter` 是唯一几何模型输出字段；`body_model` 与旧兼容别名已移除。
 
 ### 4.2 `run_guide_first_frame_truth_noise(cfg) -> dict`
 

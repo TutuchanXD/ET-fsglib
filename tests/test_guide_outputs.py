@@ -5,7 +5,7 @@ import numpy as np
 
 from fsglib.common.types import AttitudeSolution, MatchedStar, MatchingResult, ObservedStar
 from fsglib.ephemeris.types import ReferenceStar
-from fsglib.pipeline import run_guide_init
+from fsglib.pipeline import run_guide_init, run_guide_truth_noise
 from fsglib.pipeline.guide_outputs import (
     resolve_debug_output_dir,
     resolve_figures_output_dir,
@@ -344,5 +344,141 @@ def test_run_guide_first_frame_init_debug_context_is_opt_in(tmp_path, monkeypatc
 
     assert "debug_context" not in default_result
     assert "body_model" not in default_result
+    assert "geometry_model" not in default_result
     assert default_result["geometry_adapter"]["mode"] == "exact_et_focalplane"
     assert debug_result["debug_context"]["observed_stars"] is observed
+
+
+def test_run_guide_first_frame_truth_noise_uses_adapter_output_only(tmp_path, monkeypatch):
+    observed = [
+        ObservedStar(
+            detector_id="detA",
+            source_id="detA:1",
+            x=5.0,
+            y=6.0,
+            los_body=np.array([0.0, 0.0, 1.0]),
+            flux=100.0,
+            snr=20.0,
+        )
+    ]
+    reference = [
+        ReferenceStar(
+            catalog_id=101,
+            time_s=0.0,
+            los_inertial=np.array([0.0, 0.0, 1.0]),
+            mag_g=10.0,
+            detector_ids_visible=["detA"],
+            predicted_xy={"detA": (5.5, 6.5)},
+            predicted_valid={"detA": True},
+            weight_hint=1.0,
+        )
+    ]
+    matching = MatchingResult(
+        matched=[
+            MatchedStar(
+                detector_id="detA",
+                source_id="detA:1",
+                catalog_id=101,
+                los_body=observed[0].los_body,
+                los_inertial=reference[0].los_inertial,
+                match_score=1.0,
+            )
+        ],
+        unmatched_observed_ids=[],
+        unmatched_catalog_ids=[],
+        mode="init",
+        success=True,
+        score=1.0,
+    )
+    cfg = {
+        "guide_truth_noise": {
+            "dataset_root": str(tmp_path),
+            "detector_batches": [{"detector_id": "detA", "batch_name": "batch0"}],
+            "frame_index": 0,
+            "reference_topk_per_detector": 1,
+            "catalog_g_mag_max": 16.0,
+            "centroid_noise_sigma_pix": 0.0,
+        },
+        "match": {},
+        "attitude": {},
+    }
+    detector_stats = {
+        "detA": {
+            "batch_name": "batch0",
+            "frame_path": str(tmp_path / "frame.npz"),
+            "num_truth_stars_visible": 1,
+            "num_candidates_raw": 1,
+            "num_candidates_selected": 1,
+        }
+    }
+    reference_stats = {
+        "detA": {
+            "num_reference_stars": 1,
+            "num_reference_preselected": 1,
+            "num_reference_isolated": 1,
+            "preselect_topk": 1,
+            "isolation_radius_pix": None,
+        }
+    }
+    geometry_adapter = SimpleNamespace(
+        serialize=lambda: {
+            "mode": "exact_et_focalplane",
+            "rotation_body_from_eq": np.eye(3).tolist(),
+            "frame_alignment_grid_size": 1,
+            "frame_alignment_fit_rms_arcsec": 0.0,
+            "frame_alignment_fit_max_arcsec": 0.0,
+        }
+    )
+    sim_to_detector_map = {
+        "kind": "offset",
+        "schema_version": 2,
+        "offset_x_pix": 0.0,
+        "offset_y_pix": 0.0,
+        "image_center_pix": 1.0,
+        "guide_query_target_center_xpix": 1.0,
+        "guide_query_target_center_ypix": 1.0,
+    }
+
+    monkeypatch.setattr(
+        run_guide_truth_noise,
+        "_load_et_coord",
+        lambda _cfg: (object(), object(), object(), object()),
+    )
+    monkeypatch.setattr(
+        run_guide_truth_noise,
+        "build_exact_focalplane_geometry_adapter",
+        lambda *_args, **_kwargs: geometry_adapter,
+    )
+    monkeypatch.setattr(
+        run_guide_truth_noise,
+        "_build_sim_to_detector_map",
+        lambda *_args: sim_to_detector_map,
+    )
+    monkeypatch.setattr(
+        run_guide_truth_noise,
+        "_build_truth_noise_observed",
+        lambda *_args: (observed, detector_stats.copy(), {"detA": {}}),
+    )
+    monkeypatch.setattr(run_guide_truth_noise, "_build_reference_stars", lambda *_args: (reference, reference_stats))
+    monkeypatch.setattr(run_guide_truth_noise, "match_stars", lambda *_args: matching)
+    monkeypatch.setattr(
+        run_guide_truth_noise,
+        "solve_attitude",
+        lambda *_args: AttitudeSolution(
+            q_ib=np.array([1.0, 0.0, 0.0, 0.0]),
+            c_ib=np.eye(3),
+            euler_zyx=None,
+            valid=True,
+            mode="init",
+            num_matched=1,
+            residual_rms_arcsec=0.0,
+            residual_max_arcsec=0.0,
+        ),
+    )
+    monkeypatch.setattr(run_guide_truth_noise, "compute_guide_error_audit", lambda *_args: {"enabled": False})
+
+    result = run_guide_truth_noise.run_guide_first_frame_truth_noise(cfg)
+
+    assert "body_model" not in result
+    assert "geometry_model" not in result
+    assert result["geometry_adapter"]["mode"] == "exact_et_focalplane"

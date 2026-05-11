@@ -157,7 +157,6 @@ def main() -> None:
         "detector_stats": result["detector_stats"],
         "sim_to_detector_map": result["sim_to_detector_map"],
         "geometry_adapter": geometry_adapter,
-        "geometry_model": geometry_adapter,
         "synthetic_centroid_model": result["synthetic_centroid_model"],
         "error_audit": error_audit_summary,
         "error_audit_detail_path": str(audit_path),

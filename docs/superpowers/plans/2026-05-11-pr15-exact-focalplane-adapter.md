@@ -78,7 +78,7 @@ Use `geometry_adapter.pixel_to_focal()` for metadata and `geometry_adapter.pixel
 
 - [x] **Step 3: Replace output payload**
 
-Return `geometry_adapter` and `geometry_model` serialized payloads for compatibility. Do not return `body_model`.
+Return the `geometry_adapter` serialized payload. Do not return `geometry_model` or `body_model`.
 
 - [x] **Step 4: Run workflow tests**
 

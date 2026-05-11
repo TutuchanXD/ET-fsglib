@@ -44,13 +44,13 @@ def _deep_update(base: dict, override: dict) -> dict:
     return merged
 
 
-def _geometry_summary_lines(geometry_model: dict) -> list[str]:
+def _geometry_summary_lines(geometry_adapter: dict) -> list[str]:
     return [
-        f"LOS geometry: {geometry_model['mode']}",
+        f"LOS geometry: {geometry_adapter['mode']}",
         (
             "Frame alignment RMS/max (arcsec): "
-            f"{geometry_model['frame_alignment_fit_rms_arcsec']:.4f} / "
-            f"{geometry_model['frame_alignment_fit_max_arcsec']:.4f}"
+            f"{geometry_adapter['frame_alignment_fit_rms_arcsec']:.4f} / "
+            f"{geometry_adapter['frame_alignment_fit_max_arcsec']:.4f}"
         ),
     ]
 
@@ -65,7 +65,7 @@ def main() -> None:
     result = run_guide_first_frame_init(cfg, include_debug_context=True)
     solution = result["solution"]
     matching = result["matching"]
-    geometry_model = result["geometry_adapter"]
+    geometry_adapter = result["geometry_adapter"]
 
     print("----------------------------------------")
     print("Microlens Guide First Frame Joint Solve Results:")
@@ -83,7 +83,7 @@ def main() -> None:
     print(f"Predicted-position matches: {matching.debug.get('num_predicted_position_matches')}")
     print(f"Local-pyramid matches: {matching.debug.get('num_local_pyramid_matches')}")
     print(f"Mean residual (pix): {matching.debug.get('mean_residual_pix')}")
-    for line in _geometry_summary_lines(geometry_model):
+    for line in _geometry_summary_lines(geometry_adapter):
         print(line)
     if result["error_audit"].get("enabled", False):
         audit_summary = result["error_audit"]["summary"]
@@ -184,8 +184,7 @@ def main() -> None:
         "reference_count": int(result["reference_count"]),
         "detector_stats": result["detector_stats"],
         "sim_to_detector_map": result["sim_to_detector_map"],
-        "geometry_adapter": geometry_model,
-        "geometry_model": geometry_model,
+        "geometry_adapter": geometry_adapter,
         "error_audit": error_audit_summary,
         "error_audit_detail_path": str(audit_path),
         "results_root": str(results_root),

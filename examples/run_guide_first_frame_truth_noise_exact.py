@@ -37,13 +37,13 @@ def _deep_update(base: dict, override: dict) -> dict:
     return merged
 
 
-def _geometry_summary_lines(geometry_model: dict) -> list[str]:
+def _geometry_summary_lines(geometry_adapter: dict) -> list[str]:
     return [
-        f"LOS geometry: {geometry_model['mode']}",
+        f"LOS geometry: {geometry_adapter['mode']}",
         (
             "Frame alignment RMS/max (arcsec): "
-            f"{geometry_model['frame_alignment_fit_rms_arcsec']:.4f} / "
-            f"{geometry_model['frame_alignment_fit_max_arcsec']:.4f}"
+            f"{geometry_adapter['frame_alignment_fit_rms_arcsec']:.4f} / "
+            f"{geometry_adapter['frame_alignment_fit_max_arcsec']:.4f}"
         ),
     ]
 
@@ -59,7 +59,7 @@ def main() -> None:
     solution = result["solution"]
     matching = result["matching"]
     synth = result["synthetic_centroid_model"]
-    geometry_model = result["geometry_adapter"]
+    geometry_adapter = result["geometry_adapter"]
 
     print("----------------------------------------")
     print("Guide First Frame Truth-Noise Exact Solve:")
@@ -73,7 +73,7 @@ def main() -> None:
         )
     )
     print(f"Random seed: {synth['random_seed']}")
-    for line in _geometry_summary_lines(geometry_model):
+    for line in _geometry_summary_lines(geometry_adapter):
         print(line)
     print(f"Attitude valid: {solution.valid}")
     print(f"Matched stars:  {solution.num_matched}")
@@ -178,8 +178,7 @@ def main() -> None:
         "reference_count": int(result["reference_count"]),
         "detector_stats": result["detector_stats"],
         "sim_to_detector_map": result["sim_to_detector_map"],
-        "geometry_adapter": geometry_model,
-        "geometry_model": geometry_model,
+        "geometry_adapter": geometry_adapter,
         "synthetic_centroid_model": result["synthetic_centroid_model"],
         "error_audit": error_audit_summary,
         "error_audit_detail_path": str(audit_path),
