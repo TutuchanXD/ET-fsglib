@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.spatial import cKDTree
 
 from fsglib.match.lost_in_space import build_lis_index_from_arrays, save_lis_index
 
@@ -27,39 +28,54 @@ def _drop_fainter_close_neighbors(df: pd.DataFrame, isolation_radius_arcsec: flo
 
     vectors = _radec_to_vectors(df["ra"].to_numpy(), df["dec"].to_numpy())
     keep = np.ones(len(df), dtype=bool)
-    cos_limit = float(np.cos(float(isolation_radius_arcsec) / ARCSEC_PER_RAD))
-    ordered_indices = sorted(
-        range(len(df)),
-        key=lambda idx: (float(df.iloc[idx]["g_mean_mag"]), int(df.iloc[idx]["source_id"])),
-    )
+    angle_rad = float(isolation_radius_arcsec) / ARCSEC_PER_RAD
+    chord_radius = float(np.sqrt(max(0.0, 2.0 - 2.0 * np.cos(angle_rad))))
+    close_pairs = cKDTree(vectors).query_pairs(r=chord_radius)
+    rank = {
+        index: (float(row.g_mean_mag), int(row.source_id))
+        for index, row in enumerate(df.itertuples(index=False))
+    }
 
-    for pos, idx in enumerate(ordered_indices):
-        if not keep[idx]:
+    for i, j in sorted(close_pairs):
+        if not keep[i] or not keep[j]:
             continue
-        for other in ordered_indices[pos + 1:]:
-            if not keep[other]:
-                continue
-            if float(np.dot(vectors[idx], vectors[other])) >= cos_limit:
-                keep[other] = False
+        drop_index = j if rank[i] <= rank[j] else i
+        keep[drop_index] = False
 
     return df.loc[keep].reset_index(drop=True)
 
 
-def _load_gaia_csv_rows(gaia_root: Path, mag_limit: float, max_files: int | None) -> pd.DataFrame:
+def _load_gaia_csv_rows(
+    gaia_root: Path,
+    mag_limit: float,
+    max_files: int | None,
+    max_catalog_stars: int | None,
+) -> pd.DataFrame:
+    if not gaia_root.is_dir():
+        raise FileNotFoundError(f"Gaia root does not exist or is not a directory: {gaia_root}")
+
     files = sorted(gaia_root.glob("healpix_n05_nested_*.csv"))
     if max_files is not None:
         files = files[:max_files]
+    if not files:
+        raise ValueError(f"No Gaia HEALPix CSV files found under {gaia_root}")
 
     rows = []
+    selected_count = 0
     for path in files:
         frame = pd.read_csv(path, usecols=["source_id", "ra", "dec", "g_mean_mag"])
         valid = frame["g_mean_mag"].notna() & (frame["g_mean_mag"] <= float(mag_limit))
         filtered = frame.loc[valid, ["source_id", "ra", "dec", "g_mean_mag"]]
         if not filtered.empty:
+            selected_count += len(filtered)
+            if max_catalog_stars is not None and selected_count > int(max_catalog_stars):
+                raise ValueError(
+                    f"LIS index selected more than max_catalog_stars={int(max_catalog_stars)} stars before isolation"
+                )
             rows.append(filtered)
 
     if not rows:
-        return pd.DataFrame(columns=["source_id", "ra", "dec", "g_mean_mag"])
+        raise ValueError(f"No Gaia stars matched mag_limit={float(mag_limit)} under {gaia_root}")
     return pd.concat(rows, ignore_index=True)
 
 
@@ -71,10 +87,15 @@ def build_lis_index_from_gaia_csv(
     bandpass: str,
     isolation_radius_arcsec: float,
     max_files: int | None = None,
+    max_catalog_stars: int | None = None,
 ):
     root = Path(gaia_root).expanduser().resolve()
-    filtered = _load_gaia_csv_rows(root, mag_limit, max_files)
+    filtered = _load_gaia_csv_rows(root, mag_limit, max_files, max_catalog_stars)
     isolated = _drop_fainter_close_neighbors(filtered, isolation_radius_arcsec)
+    if max_catalog_stars is not None and len(isolated) > int(max_catalog_stars):
+        raise ValueError(
+            f"LIS index selected {len(isolated)} catalog stars, exceeding max_catalog_stars={int(max_catalog_stars)}"
+        )
     config_snapshot = {
         "gaia_root": str(root),
         "mag_limit": float(mag_limit),
@@ -82,6 +103,7 @@ def build_lis_index_from_gaia_csv(
         "bandpass": bandpass,
         "isolation_radius_arcsec": float(isolation_radius_arcsec),
         "max_files": max_files,
+        "max_catalog_stars": max_catalog_stars,
     }
     config_snapshot_json = json.dumps(config_snapshot, sort_keys=True)
     vectors = _radec_to_vectors(isolated["ra"].to_numpy(), isolated["dec"].to_numpy())
@@ -100,6 +122,7 @@ def build_lis_index_from_gaia_csv(
             },
             "config_snapshot_json": config_snapshot_json,
         },
+        max_catalog_stars=max_catalog_stars,
     )
 
 
@@ -117,6 +140,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Drop fainter stars within this angular radius",
     )
     parser.add_argument("--max-files", type=int, default=None, help="Optional cap on input partitions for fixtures")
+    parser.add_argument(
+        "--max-catalog-stars",
+        type=int,
+        default=None,
+        help="Fail fast if selected catalog stars exceed this limit",
+    )
     args = parser.parse_args(argv)
 
     index = build_lis_index_from_gaia_csv(
@@ -126,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
         bandpass=args.bandpass,
         isolation_radius_arcsec=args.isolation_radius_arcsec,
         max_files=args.max_files,
+        max_catalog_stars=args.max_catalog_stars,
     )
     save_lis_index(index, args.out)
     return 0

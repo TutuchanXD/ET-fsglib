@@ -121,12 +121,17 @@ def build_lis_index_from_arrays(
     vectors: np.ndarray,
     magnitudes: np.ndarray,
     config_snapshot: dict[str, Any],
+    max_catalog_stars: int | None = None,
 ) -> LISIndex:
     ids = np.asarray(catalog_ids, dtype=np.int64)
     mags = np.asarray(magnitudes, dtype=np.float64)
     unit_vectors = _normalize_vectors(vectors)
     if ids.ndim != 1 or mags.ndim != 1 or len(ids) != len(unit_vectors) or len(mags) != len(unit_vectors):
         raise ValueError("catalog_ids, vectors, and magnitudes must have matching length")
+    if max_catalog_stars is not None and len(ids) > int(max_catalog_stars):
+        raise ValueError(
+            f"LIS index selected {len(ids)} catalog stars, exceeding max_catalog_stars={int(max_catalog_stars)}"
+        )
 
     order = np.lexsort((ids, mags))
     sorted_ids = ids[order]
@@ -175,20 +180,39 @@ def save_lis_index(index: LISIndex, output_path: str | Path) -> None:
     )
 
 
-def load_lis_index(input_path: str | Path) -> LISIndex:
+def load_lis_index(input_path: str | Path, *, verify_checksum: bool = True) -> LISIndex:
     with np.load(input_path, allow_pickle=False) as data:
         metadata = json.loads(str(data["metadata_json"]))
+        catalog_ids = np.asarray(data["catalog_ids"], dtype=np.int64)
+        catalog_vectors = np.asarray(data["catalog_vectors"], dtype=np.float64)
+        catalog_mags = np.asarray(data["catalog_mags"], dtype=np.float64)
+        pair_indices = np.asarray(data["pair_indices"], dtype=np.int64)
+        pair_angles_rad = np.asarray(data["pair_angles_rad"], dtype=np.float64)
+        checksum = str(np.asarray(data["checksum"]).item())
+        if verify_checksum:
+            expected_checksum = _checksum_payload(
+                catalog_ids,
+                catalog_vectors,
+                catalog_mags,
+                pair_indices,
+                pair_angles_rad,
+                metadata,
+            )
+            if checksum != expected_checksum:
+                raise ValueError(
+                    f"LIS index checksum mismatch for {input_path}: stored={checksum} computed={expected_checksum}"
+                )
         return LISIndex(
-            catalog_ids=np.asarray(data["catalog_ids"], dtype=np.int64),
-            catalog_vectors=np.asarray(data["catalog_vectors"], dtype=np.float64),
-            catalog_mags=np.asarray(data["catalog_mags"], dtype=np.float64),
-            pair_indices=np.asarray(data["pair_indices"], dtype=np.int64),
-            pair_angles_rad=np.asarray(data["pair_angles_rad"], dtype=np.float64),
+            catalog_ids=catalog_ids,
+            catalog_vectors=catalog_vectors,
+            catalog_mags=catalog_mags,
+            pair_indices=pair_indices,
+            pair_angles_rad=pair_angles_rad,
             k_m=float(np.asarray(data["k_m"])[0]),
             k_b=float(np.asarray(data["k_b"])[0]),
             k_vec=np.asarray(data["k_vec"], dtype=np.int64),
             metadata=metadata,
-            checksum=str(data["checksum"]),
+            checksum=checksum,
         )
 
 

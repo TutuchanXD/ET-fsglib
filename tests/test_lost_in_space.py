@@ -1,6 +1,8 @@
 import json
 
 import numpy as np
+import pytest
+from setuptools import find_packages
 
 from fsglib.match.lost_in_space import (
     build_lis_index_from_arrays,
@@ -9,6 +11,10 @@ from fsglib.match.lost_in_space import (
     save_lis_index,
 )
 from fsglib.tools.build_lis_index import build_lis_index_from_gaia_csv
+
+
+def test_tools_package_is_discovered_for_distribution():
+    assert "fsglib.tools" in find_packages()
 
 
 def _unit(x: float, y: float, z: float) -> np.ndarray:
@@ -84,6 +90,50 @@ def test_lis_index_round_trip_and_angle_query(tmp_path):
     assert pair_catalog_ids == {(1, 2), (1, 3), (2, 3), (3, 4)}
 
 
+def test_lis_index_load_rejects_checksum_mismatch(tmp_path):
+    index = build_lis_index_from_arrays(
+        catalog_ids=np.array([1, 2, 3], dtype=np.int64),
+        vectors=_synthetic_vectors()[:3],
+        magnitudes=np.array([10.0, 11.0, 12.0], dtype=np.float64),
+        config_snapshot={"epoch": 2026.0, "bandpass": "gaia_g", "filters": {}},
+    )
+    good_path = tmp_path / "good.lis_index.npz"
+    bad_path = tmp_path / "bad.lis_index.npz"
+    save_lis_index(index, good_path)
+
+    with np.load(good_path, allow_pickle=False) as data:
+        np.savez_compressed(
+            bad_path,
+            catalog_ids=data["catalog_ids"],
+            catalog_vectors=data["catalog_vectors"],
+            catalog_mags=data["catalog_mags"],
+            pair_indices=data["pair_indices"],
+            pair_angles_rad=data["pair_angles_rad"] + 1.0e-4,
+            k_m=data["k_m"],
+            k_b=data["k_b"],
+            k_vec=data["k_vec"],
+            metadata_json=data["metadata_json"],
+            checksum=data["checksum"],
+        )
+
+    with pytest.raises(ValueError, match="checksum"):
+        load_lis_index(bad_path)
+
+    loaded_without_verification = load_lis_index(bad_path, verify_checksum=False)
+    assert loaded_without_verification.checksum == index.checksum
+
+
+def test_build_lis_index_from_arrays_enforces_catalog_size_guard():
+    with pytest.raises(ValueError, match="max_catalog_stars"):
+        build_lis_index_from_arrays(
+            catalog_ids=np.array([1, 2, 3], dtype=np.int64),
+            vectors=_synthetic_vectors()[:3],
+            magnitudes=np.array([10.0, 11.0, 12.0], dtype=np.float64),
+            config_snapshot={"epoch": 2026.0, "bandpass": "gaia_g", "filters": {}},
+            max_catalog_stars=2,
+        )
+
+
 def test_build_lis_index_from_gaia_csv_filters_and_records_provenance(tmp_path):
     gaia_root = tmp_path / "gaia"
     gaia_root.mkdir()
@@ -130,3 +180,52 @@ def test_build_lis_index_from_gaia_csv_filters_and_records_provenance(tmp_path):
     assert index.metadata["num_catalog_stars"] == 3
     assert index.metadata["num_pairs"] == 3
     assert json.loads(index.metadata["config_snapshot_json"])["bandpass"] == "gaia_g"
+
+
+def test_build_lis_index_from_gaia_csv_validates_input_root(tmp_path):
+    missing_root = tmp_path / "missing"
+    with pytest.raises(FileNotFoundError, match="Gaia root"):
+        build_lis_index_from_gaia_csv(
+            gaia_root=missing_root,
+            mag_limit=13.0,
+            epoch=2026.0,
+            bandpass="gaia_g",
+            isolation_radius_arcsec=1.0,
+        )
+
+    empty_root = tmp_path / "empty"
+    empty_root.mkdir()
+    with pytest.raises(ValueError, match="No Gaia HEALPix CSV"):
+        build_lis_index_from_gaia_csv(
+            gaia_root=empty_root,
+            mag_limit=13.0,
+            epoch=2026.0,
+            bandpass="gaia_g",
+            isolation_radius_arcsec=1.0,
+        )
+
+
+def test_build_lis_index_from_gaia_csv_enforces_catalog_size_guard(tmp_path):
+    gaia_root = tmp_path / "gaia"
+    gaia_root.mkdir()
+    (gaia_root / "healpix_n05_nested_00001.csv").write_text(
+        "\n".join(
+            [
+                "source_id,ra,dec,g_mean_mag",
+                "100,0.0,0.0,9.0",
+                "200,90.0,0.0,10.0",
+                "300,0.0,90.0,11.0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="max_catalog_stars"):
+        build_lis_index_from_gaia_csv(
+            gaia_root=gaia_root,
+            mag_limit=13.0,
+            epoch=2026.0,
+            bandpass="gaia_g",
+            isolation_radius_arcsec=0.0,
+            max_catalog_stars=2,
+        )
