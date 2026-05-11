@@ -9,24 +9,33 @@ def _normalize_detector_id(value) -> int | str:
     except (TypeError, ValueError):
         return str(value)
 
-def dcm_to_quat(dcm: np.ndarray) -> np.ndarray:
-    """
-    Convert an inertial-to-body DCM to a unit quaternion in scalar-first form [w, x, y, z].
-    """
-    rot = Rotation.from_matrix(dcm)
-    q_xyzw = rot.as_quat()
+
+def scalar_first_quat_to_scipy_xyzw(q: np.ndarray) -> np.ndarray:
+    q = np.asarray(q, dtype=np.float64)
+    q = q / np.linalg.norm(q)
+    return np.array([q[1], q[2], q[3], q[0]], dtype=np.float64)
+
+
+def scipy_xyzw_to_scalar_first_quat(q_xyzw: np.ndarray) -> np.ndarray:
+    q_xyzw = np.asarray(q_xyzw, dtype=np.float64)
     q = np.array([q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2]], dtype=np.float64)
     if q[0] < 0:
         q = -q
     return q / np.linalg.norm(q)
 
+
+def dcm_to_quat(dcm: np.ndarray) -> np.ndarray:
+    """
+    Convert an inertial-to-body DCM to a unit quaternion in scalar-first form [w, x, y, z].
+    """
+    rot = Rotation.from_matrix(dcm)
+    return scipy_xyzw_to_scalar_first_quat(rot.as_quat())
+
 def quat_to_dcm(q: np.ndarray) -> np.ndarray:
     """
     Convert a scalar-first quaternion [w, x, y, z] to an inertial-to-body DCM.
     """
-    q = q / np.linalg.norm(q)
-    w, x, y, z = q
-    rot = Rotation.from_quat([x, y, z, w])
+    rot = Rotation.from_quat(scalar_first_quat_to_scipy_xyzw(q))
     return rot.as_matrix()
 
 def compute_residuals(c_ib: np.ndarray, matched_stars: list[MatchedStar]) -> np.ndarray:

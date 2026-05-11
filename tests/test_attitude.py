@@ -1,7 +1,25 @@
 import numpy as np
+from scipy.spatial.transform import Rotation
 
-from fsglib.attitude.solver import solve_attitude
+from fsglib.attitude.solver import (
+    dcm_to_quat,
+    quat_to_dcm,
+    scalar_first_quat_to_scipy_xyzw,
+    solve_attitude,
+)
 from fsglib.common.types import AttitudeSolveInput, MatchedStar
+
+
+def test_scalar_first_quaternion_convention_matches_scipy_rotation():
+    q_ib = np.array([np.cos(np.pi / 4.0), 0.0, 0.0, np.sin(np.pi / 4.0)])
+
+    scipy_xyzw = scalar_first_quat_to_scipy_xyzw(q_ib)
+    assert np.allclose(scipy_xyzw, [0.0, 0.0, np.sin(np.pi / 4.0), np.cos(np.pi / 4.0)])
+
+    c_ib = quat_to_dcm(q_ib)
+    assert np.allclose(c_ib @ np.array([1.0, 0.0, 0.0]), [0.0, 1.0, 0.0], atol=1e-12)
+    assert np.allclose(c_ib, Rotation.from_quat(scipy_xyzw).as_matrix())
+    assert np.allclose(dcm_to_quat(c_ib), q_ib)
 
 
 def test_attitude_solution_exposes_quality_fields():

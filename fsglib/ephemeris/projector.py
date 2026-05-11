@@ -1,5 +1,6 @@
 import numpy as np
 
+from fsglib.attitude.solver import quat_to_dcm
 from fsglib.common.coords import radec_to_unit_vector, unit_vector_to_radec
 
 class RealOpticalProjector:
@@ -304,18 +305,11 @@ class RealOpticalProjector:
 
     def project_to_detectors(self, los_inertial: np.ndarray, attitude_q: np.ndarray) -> tuple[dict, dict, list]:
         """
-        Projects an inertial vector into the camera planes considering the full attitude matrix.
+        Projects an inertial vector into camera planes using q_ib: inertial -> body.
         Returns predicted_xy, predicted_valid, visible_det_ids.
         """
-        # Convert quaternion to rotation matrix (Body to Inertial)
-        q = attitude_q
-        # Ensure q is scalar first: [w, x, y, z] is scipy standard (sometimes [x,y,z,w], assuming [w,x,y,z] here)
-        from scipy.spatial.transform import Rotation
-        # scipy uses [x, y, z, w], attitude solver outputs [w, x, y, z]
-        rot = Rotation.from_quat([q[1], q[2], q[3], q[0]])
-        C_IB = rot.as_matrix()
-        
-        v_body = C_IB @ los_inertial
+        c_ib = quat_to_dcm(attitude_q)
+        v_body = c_ib @ los_inertial
         
         predicted_xy = {}
         predicted_valid = {}
