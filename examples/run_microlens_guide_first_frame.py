@@ -11,8 +11,9 @@
 - configs/guide_microlens_v1_noise_psf_etcoord.yaml
 
 结果输出：
-- outputs/debug/microlens_guide_first_frame_v1_noise_psf_result.json
-- outputs/debug/microlens_guide_first_frame_v1_noise_psf_error_audit.json
+- <dataset_root>_fsg-results/frameXXXXXX/debug/microlens_guide_first_frame_v1_noise_psf_result.json
+- <dataset_root>_fsg-results/frameXXXXXX/debug/microlens_guide_first_frame_v1_noise_psf_error_audit.json
+- <dataset_root>_fsg-results/frameXXXXXX/figures/matching_overlay_*.png
 """
 
 import json
@@ -25,6 +26,12 @@ import yaml
 sys.path.append(str(Path(__file__).parent.parent))
 
 from fsglib.pipeline.run_guide_init import run_guide_first_frame_init
+from fsglib.pipeline.guide_outputs import (
+    resolve_debug_output_dir,
+    resolve_figures_output_dir,
+    resolve_fsg_results_root,
+    save_matching_overlays,
+)
 
 
 def _deep_update(base: dict, override: dict) -> dict:
@@ -64,7 +71,7 @@ def main() -> None:
     cfg = yaml.safe_load(base_cfg_path.read_text(encoding="utf-8"))
     cfg = _deep_update(cfg, yaml.safe_load(guide_cfg_path.read_text(encoding="utf-8")))
 
-    result = run_guide_first_frame_init(cfg)
+    result = run_guide_first_frame_init(cfg, include_debug_context=True)
     solution = result["solution"]
     matching = result["matching"]
     geometry_model = result.get("geometry_model", result["body_model"])
@@ -145,10 +152,14 @@ def main() -> None:
             )
         )
 
-    output_path = Path("outputs/debug/microlens_guide_first_frame_v1_noise_psf_result.json")
-    audit_path = Path("outputs/debug/microlens_guide_first_frame_v1_noise_psf_error_audit.json")
+    results_root = resolve_fsg_results_root(cfg)
+    debug_dir = resolve_debug_output_dir(cfg)
+    figures_dir = resolve_figures_output_dir(cfg)
+    output_path = debug_dir / "microlens_guide_first_frame_v1_noise_psf_result.json"
+    audit_path = debug_dir / "microlens_guide_first_frame_v1_noise_psf_error_audit.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     audit_path.parent.mkdir(parents=True, exist_ok=True)
+    matching_overlay_summary = save_matching_overlays(result, figures_dir)
     error_audit = result["error_audit"]
     error_audit_summary = (
         {
@@ -186,12 +197,17 @@ def main() -> None:
         "body_model": result["body_model"],
         "error_audit": error_audit_summary,
         "error_audit_detail_path": str(audit_path),
+        "results_root": str(results_root),
+        "matching_overlay_summary_path": str(figures_dir / "matching_overlay_summary.json"),
+        "matching_overlay_summary": matching_overlay_summary,
         "meta": result["meta"],
     }
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     audit_path.write_text(json.dumps(error_audit, indent=2), encoding="utf-8")
+    print(f"Results root: {results_root}")
     print(f"Result JSON: {output_path}")
     print(f"Error audit JSON: {audit_path}")
+    print(f"Matching overlays: {figures_dir}")
 
 
 if __name__ == "__main__":
