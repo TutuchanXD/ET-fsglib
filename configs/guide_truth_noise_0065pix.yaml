@@ -5,8 +5,8 @@ guide_truth_noise:
   dataset_root: /home/cxgao/Results/FSG_guide_sims_legacy_20260508/guide_det_v1_noise_psf_6s
   frame_index: 0
   max_observed_per_detector: 100
-  body_model_fit_grid_size: 13
-  body_model_initial_f_mm: 428.0
+  los_geometry_mode: exact_et_focalplane
+  frame_alignment_grid_size: 13
   catalog_g_mag_max: 12.5
   reference_topk_per_detector: 260
   target_epoch: 2000.0

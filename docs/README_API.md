@@ -46,7 +46,7 @@ __Version：1.0.0__
 功能：
 
 - 单帧，`RawFrame -> PreprocessedFrame -> StarCandidate -> ObservedStar`；
-- 联合链路，`ObservedStar` 通过 `et_focalplane` ~~或拟合的 body model 构造~~（当前抛弃主点假设——chenxu）。
+- 联合链路，`ObservedStar` 通过 exact `et_focalplane` adapter 构造。
 
 ### 3.3 参考星、匹配与姿态解算层
 
@@ -106,15 +106,15 @@ __Version：1.0.0__
 - `reference_count`
 - `detector_stats`
 - `sim_to_detector_map`
+- `geometry_adapter`
 - `geometry_model`
-- `body_model`
 - `error_audit`
 - `meta`
 
 说明：
 
-- 先建立 sim 坐标到 `et_focalplane` detector 坐标的桥接，再做像点转 LOS；
-- ~~`geometry_model` 和 `body_model` 当前返回的是同一套序列化结果~~。（不再使用body_model—chenxu）
+- 先建立 sim 坐标到 `et_focalplane` detector 坐标的桥接，再通过 exact ET focal-plane adapter 做像点转 LOS；
+- `geometry_model` 是 `geometry_adapter` 的兼容别名；`body_model` 已移除。
 
 ### 4.2 `run_guide_first_frame_truth_noise(cfg) -> dict`
 
@@ -408,7 +408,7 @@ __Version：1.0.0__
 1. 通过 `_load_et_coord()` 动态加载 `et_coord` 对象。
 2. 按 guide detector 建立 sim 像点到 `et_focalplane` detector 像点的映射。
 3. 从每个 batch 的首帧图像提取候选星。
-4. 候选星经 `et_focalplane` 几何模型转成 `ObservedStar`。
+4. 候选星经 exact ET focal-plane adapter 转成 `ObservedStar`。
 5. 用 `query_detector_sources()` 为每个 detector 构造参考星。
 6. 统一做匹配和 QUEST 解算。
 7. 生成 `guide_error_audit`。

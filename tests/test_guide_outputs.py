@@ -291,21 +291,21 @@ def test_run_guide_first_frame_init_debug_context_is_opt_in(tmp_path, monkeypatc
             "isolation_radius_pix": None,
         }
     }
+    geometry_adapter = SimpleNamespace(
+        serialize=lambda: {
+            "mode": "exact_et_focalplane",
+            "rotation_body_from_eq": np.eye(3).tolist(),
+            "frame_alignment_grid_size": 1,
+            "frame_alignment_fit_rms_arcsec": 0.0,
+            "frame_alignment_fit_max_arcsec": 0.0,
+        }
+    )
 
     monkeypatch.setattr(run_guide_init, "_load_et_coord", lambda _cfg: (object(), object(), object(), object()))
     monkeypatch.setattr(
         run_guide_init,
-        "_build_geometry_model",
-        lambda *_args: {
-            "mode": "body_model_proxy",
-            "coeffs": np.array([1.0, 0.0, 0.0]),
-            "grid_size": 1,
-            "fit_rms_arcsec": 0.0,
-            "fit_max_arcsec": 0.0,
-            "rotation_body_from_eq": np.eye(3),
-            "optimization_success": True,
-            "optimization_message": "mock",
-        },
+        "build_exact_focalplane_geometry_adapter",
+        lambda *_args, **_kwargs: geometry_adapter,
     )
     monkeypatch.setattr(
         run_guide_init,
@@ -343,4 +343,6 @@ def test_run_guide_first_frame_init_debug_context_is_opt_in(tmp_path, monkeypatc
     debug_result = run_guide_init.run_guide_first_frame_init(cfg, include_debug_context=True)
 
     assert "debug_context" not in default_result
+    assert "body_model" not in default_result
+    assert default_result["geometry_adapter"]["mode"] == "exact_et_focalplane"
     assert debug_result["debug_context"]["observed_stars"] is observed

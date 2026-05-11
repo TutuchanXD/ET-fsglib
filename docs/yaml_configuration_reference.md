@@ -37,7 +37,7 @@ They are documented here so configuration files do not hide silent no-ops.
 | `configs/base.yaml` | Common defaults for project metadata, extraction, matching, tracking, ephemeris, attitude, evaluation, and debug output. |
 | `configs/guide_v1_noise_psf_etcoord.yaml` | Transit guide-detector first-frame initialization with real centroid extraction and `et_focalplane` geometry. |
 | `configs/guide_microlens_v1_noise_psf_etcoord.yaml` | Microlensing guide-detector first-frame initialization with real centroid extraction and microlensing `et_focalplane` registry data. |
-| `configs/guide_truth_noise_0065pix.yaml` | Truth-position synthetic centroid workflow with detector-pixel Gaussian noise and body-model proxy geometry. |
+| `configs/guide_truth_noise_0065pix.yaml` | Truth-position synthetic centroid workflow with detector-pixel Gaussian noise and exact ET focal-plane geometry. |
 | `configs/guide_truth_noise_0065pix_exact_etcoord.yaml` | Truth-position synthetic centroid workflow with exact `et_focalplane` LOS geometry. |
 | `configs/main_sim_v2.yaml` | Generic single-frame simulated detector layout overlay. |
 | `configs/detector_layout.yaml` | Physical detector layout definition for the older generic optical model path. |
@@ -319,9 +319,8 @@ Supported profile fields:
 | `guide_init.dataset_root` | path string | yes | active | Root directory containing one batch directory per guide detector. |
 | `guide_init.frame_index` | int | no | active | Frame index selected from each `batch*/frames/*.npz`; default `0`. |
 | `guide_init.max_observed_per_detector` | int or null | no | active | Keeps only the brightest/SNR-best candidates per detector before matching. Null disables the limit. |
-| `guide_init.los_geometry_mode` | string | no | active | `body_model_proxy` or `exact_et_focalplane`; default `body_model_proxy`. |
-| `guide_init.body_model_fit_grid_size` | int | no | active | Grid size used to fit the focal-plane body-model proxy and the exact-mode frame alignment. |
-| `guide_init.body_model_initial_f_mm` | float | no | active | Initial focal-length scale for body-model proxy optimization. |
+| `guide_init.los_geometry_mode` | string | no | active | Must be `exact_et_focalplane`; default `exact_et_focalplane`. |
+| `guide_init.frame_alignment_grid_size` | int | no | active | Grid size used to fit the exact ET field-angle to body-frame alignment; default `13`. |
 | `guide_init.catalog_g_mag_min` | float or null | no | active | Optional bright-end Gaia G magnitude cut. |
 | `guide_init.catalog_g_mag_max` | float | yes | active | Faint-end Gaia G magnitude cut for per-detector reference-star query. |
 | `guide_init.reference_topk_per_detector` | int | yes | active | Final number of brightest reference stars retained per detector. |
@@ -348,9 +347,8 @@ Each `guide_init.detector_batches[]` entry supports:
 | `guide_truth_noise.dataset_root` | path string | yes | active | Root directory containing one batch directory per guide detector. |
 | `guide_truth_noise.frame_index` | int | no | active | Frame index selected from each detector batch; default `0`. |
 | `guide_truth_noise.max_observed_per_detector` | int or null | no | active | Keeps only the brightest synthetic truth candidates per detector. |
-| `guide_truth_noise.los_geometry_mode` | string | no | active | `body_model_proxy` or `exact_et_focalplane`; default `body_model_proxy`. |
-| `guide_truth_noise.body_model_fit_grid_size` | int | no | active | Grid size used to fit geometry proxy/alignment. |
-| `guide_truth_noise.body_model_initial_f_mm` | float | no | active | Initial focal-length scale for body-model proxy optimization. |
+| `guide_truth_noise.los_geometry_mode` | string | no | active | Must be `exact_et_focalplane`; default `exact_et_focalplane`. |
+| `guide_truth_noise.frame_alignment_grid_size` | int | no | active | Grid size used to fit the exact ET field-angle to body-frame alignment; default `13`. |
 | `guide_truth_noise.catalog_g_mag_min` | float or null | no | active | Optional bright-end Gaia G magnitude cut. |
 | `guide_truth_noise.catalog_g_mag_max` | float | yes | active | Faint-end Gaia G magnitude cut. |
 | `guide_truth_noise.reference_topk_per_detector` | int | yes | active | Final reference-star count per detector. |

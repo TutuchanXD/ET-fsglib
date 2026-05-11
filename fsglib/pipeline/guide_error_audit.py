@@ -254,11 +254,10 @@ def _build_truth_records(
     raw,
     mapping: dict,
     transformer,
-    body_model: dict,
+    geometry_adapter,
 ) -> list[dict[str, Any]]:
     truth_stars = list((raw.meta or {}).get("truth_stars", []))
     table_lookup = _truth_table_lookup(batch_path)
-    body_rotation = np.asarray(body_model["rotation_body_from_eq"], dtype=np.float64)
     records: list[dict[str, Any]] = []
     for truth_star in truth_stars:
         truth_index = _safe_int((truth_star.meta or {}).get("truth_index", truth_star.source_id))
@@ -278,27 +277,13 @@ def _build_truth_records(
         focal_y_mm = None
         truth_model_los = None
         if truth_detector_x is not None and truth_detector_y is not None:
-            transformed = transformer.pixel_to_focal(detector_id, truth_detector_x, truth_detector_y)
+            transformed = geometry_adapter.pixel_to_focal(detector_id, truth_detector_x, truth_detector_y)
             focal_x_mm = float(transformed.x_mm)
             focal_y_mm = float(transformed.y_mm)
-            if str(body_model.get("mode", "body_model_proxy")) == "exact_et_focalplane":
-                sky = transformer.pixel_to_sky(
-                    detector_id,
-                    truth_detector_x,
-                    truth_detector_y,
-                    frame="equatorial",
-                )
-                if sky.vector_xyz is not None:
-                    los_eq = np.asarray(sky.vector_xyz, dtype=np.float64)
-                    los_eq /= np.linalg.norm(los_eq)
-                    truth_model_los = np.asarray(body_model["rotation_body_from_eq"], dtype=np.float64) @ los_eq
-                    truth_model_los /= np.linalg.norm(truth_model_los)
-            else:
-                truth_model_los = np.asarray(body_model["focal_mm_to_body_vector"](focal_x_mm, focal_y_mm), dtype=np.float64)
+            truth_model_los = geometry_adapter.pixel_to_body_los(detector_id, truth_detector_x, truth_detector_y)
 
         truth_los_inertial = radec_to_unit_vector(float(truth_star.ra_deg), float(truth_star.dec_deg))
-        truth_exact_body = body_rotation @ truth_los_inertial
-        truth_exact_body /= np.linalg.norm(truth_exact_body)
+        truth_exact_body = geometry_adapter.inertial_to_body_los(truth_los_inertial)
 
         table_meta = table_lookup.get(truth_index if truth_index is not None else -1, {})
         records.append(
@@ -534,8 +519,8 @@ def _counterfactual_solutions(cfg: dict, matching, solution, per_star_by_source:
         "num_current_matches": int(len(matching.matched)),
         "num_truth_backed_matches": int(truth_backed_sources),
         "current": _solution_summary(solution),
-        # In exact_et_focalplane mode this is the closest proxy to the actual
-        # simulated frame attitude, because it is built from NPZ detector truth.
+        # In exact_et_focalplane mode this is the simulated-frame attitude
+        # reference built from NPZ detector truth.
         "frame_truth_same_matches": _solution_summary(truth_pixel_solution),
         # This keeps the old name for backward compatibility.
         "truth_pixel_same_matches": _solution_summary(truth_pixel_solution),
@@ -583,7 +568,7 @@ def compute_guide_error_audit(
     cfg: dict,
     transformer,
     sim_to_detector_map: dict[str, dict],
-    body_model: dict,
+    geometry_adapter,
     detector_contexts: dict[str, dict[str, Any]],
     observed: list,
     matching,
@@ -612,7 +597,7 @@ def compute_guide_error_audit(
             raw,
             sim_to_detector_map[detector_id],
             transformer,
-            body_model,
+            geometry_adapter,
         )
         assigned = _assign_candidates_to_truth(selected_candidates, truth_records, truth_match_radius_pix)
         detector_entries: list[dict[str, Any]] = []

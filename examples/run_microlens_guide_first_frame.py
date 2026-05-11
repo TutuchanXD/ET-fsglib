@@ -45,21 +45,12 @@ def _deep_update(base: dict, override: dict) -> dict:
 
 
 def _geometry_summary_lines(geometry_model: dict) -> list[str]:
-    mode = str(geometry_model.get("mode", "body_model_proxy"))
-    if mode == "exact_et_focalplane":
-        return [
-            "LOS geometry: exact_et_focalplane",
-            (
-                "Body-frame alignment reference RMS/max (arcsec): "
-                f"{geometry_model['frame_alignment_reference_fit_rms_arcsec']:.4f} / "
-                f"{geometry_model['frame_alignment_reference_fit_max_arcsec']:.4f}"
-            ),
-        ]
     return [
-        "LOS geometry: body_model_proxy",
+        f"LOS geometry: {geometry_model['mode']}",
         (
-            "Body model fit RMS/max (arcsec): "
-            f"{geometry_model['fit_rms_arcsec']:.4f} / {geometry_model['fit_max_arcsec']:.4f}"
+            "Frame alignment RMS/max (arcsec): "
+            f"{geometry_model['frame_alignment_fit_rms_arcsec']:.4f} / "
+            f"{geometry_model['frame_alignment_fit_max_arcsec']:.4f}"
         ),
     ]
 
@@ -74,7 +65,7 @@ def main() -> None:
     result = run_guide_first_frame_init(cfg, include_debug_context=True)
     solution = result["solution"]
     matching = result["matching"]
-    geometry_model = result.get("geometry_model", result["body_model"])
+    geometry_model = result["geometry_adapter"]
 
     print("----------------------------------------")
     print("Microlens Guide First Frame Joint Solve Results:")
@@ -193,8 +184,8 @@ def main() -> None:
         "reference_count": int(result["reference_count"]),
         "detector_stats": result["detector_stats"],
         "sim_to_detector_map": result["sim_to_detector_map"],
+        "geometry_adapter": geometry_model,
         "geometry_model": geometry_model,
-        "body_model": result["body_model"],
         "error_audit": error_audit_summary,
         "error_audit_detail_path": str(audit_path),
         "results_root": str(results_root),
