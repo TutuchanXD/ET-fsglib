@@ -410,6 +410,10 @@ The nested `match.local_pyramid.*` keys are preferred. For backward
 compatibility, `match.pyramid_<name>` flat aliases are also read by the local
 pyramid implementation.
 
+Mode-specific local-pyramid keys can be provided by prefixing the key with
+`reacquire_`, for example `reacquire_expansion_policy`. These override the
+base key only when the matcher is invoked as a reacquire fallback.
+
 | Key | Type | Default | Status | Description |
 |-----|------|---------|--------|-------------|
 | `match.local_pyramid.enabled` | bool | `false` | declared | Informational/config-completeness flag. Actual execution is controlled by `match.algorithm`. |
@@ -420,6 +424,10 @@ pyramid implementation.
 | `match.local_pyramid.pair_angle_tol_arcsec_mixed_detector` | float | `300.0` | active | Pair-angle tolerance for mixed-detector seed matching. |
 | `match.local_pyramid.seed_rms_gate_arcsec` | float | `60.0` | active | Rejects seed attitudes whose seed LOS residual RMS exceeds this value. |
 | `match.local_pyramid.seed_max_gate_arcsec` | float | `180.0` | active | Rejects seed attitudes whose max seed LOS residual exceeds this value. |
+| `match.local_pyramid.expansion_policy` | string | `predicted_xy` | active | Expansion policy for normal local-pyramid matching. `predicted_xy` keeps the detector-pixel gate behavior. `seed_attitude_only` uses only seed-attitude angular residuals and requires `geometry_only_allowed=true`. |
+| `match.local_pyramid.geometry_only_allowed` | bool | `false` | active | Safety switch required before `seed_attitude_only` expansion is honored. |
+| `match.local_pyramid.reacquire_expansion_policy` | string | `seed_attitude_only` | active | Reacquire override used by `predicted_position_with_pyramid_reacquire` after predicted-position matching fails. |
+| `match.local_pyramid.reacquire_geometry_only_allowed` | bool | `true` | active | Allows reacquire fallback to expand from seed attitude without relying on stale predicted pixels. |
 | `match.local_pyramid.expand_angular_gate_arcsec` | float | `120.0` | active | Angular gate used when expanding a valid seed to all observed/reference pairs. |
 | `match.local_pyramid.expand_pixel_gate_pix` | float | `match.validate_max_residual_pix` | active | Detector-pixel gate used when expanding a valid seed. |
 | `match.local_pyramid.min_expanded_matches` | int | `match.validate_min_support` | active | Minimum expanded matches required to accept a seed. |
@@ -428,6 +436,18 @@ pyramid implementation.
 | `match.local_pyramid.max_seed_attitudes` | int | `2000` | active | Maximum seed attitudes scored across the search. `0` means no limit. |
 | `match.local_pyramid.min_edge_arcsec` | float | `0.0` | active | Rejects observed pyramid seeds with any pair angle smaller than this. |
 | `match.local_pyramid.max_edge_deg` | float | infinity | active | Rejects observed pyramid seeds with any pair angle larger than this. |
+| `match.local_pyramid.ambiguity_min_score_margin` | float | `1.0` | active | Rejects local-pyramid results when the best and runner-up expanded hypotheses are too close in score. `0.0` disables ambiguity rejection. |
+| `match.local_pyramid.detector_mean_warn_pix` | float | `5.0` | active | Marks a detector residual summary as `warn` when the coherent mean pixel residual norm exceeds this value. |
+| `match.local_pyramid.detector_mean_reject_pix` | float | `25.0` | active | Marks a detector residual summary as `reject` when the coherent mean pixel residual norm exceeds this value. |
+| `match.local_pyramid.detector_rms_reject_pix` | float | `25.0` | active | Marks a detector residual summary as `reject` when detector RMS pixel residual exceeds this value. |
+| `match.local_pyramid.detector_max_reject_pix` | float | `50.0` | active | Marks a detector residual summary as `reject` when any detector pixel residual exceeds this value. |
+| `match.local_pyramid.mixed_detector_reject_on_detector_warning` | bool | `true` | active | Rejects mixed-detector seed results when any participating detector has a warning residual status. |
+| `match.local_pyramid.photometric_rank_weight` | float | `0.0` | active | Optional soft cost weight comparing observed SNR/flux rank to reference magnitude rank. Kept off by default until bandpass/flux weighting is formalized. |
+| `match.local_pyramid.seed_consistency_penalty` | float | `1.0e-6` | active | Tiny assignment penalty for expansion edges that are not part of the candidate seed, used only to make exact ties deterministic. |
+
+`seed_attitude_projected` expansion is not implemented. PR4 provides
+`seed_attitude_only` for local reacquire; projector-backed seed-attitude pixel
+reprojection is tracked as follow-up work.
 
 ### Deprecated Triangle Keys
 
@@ -555,6 +575,10 @@ match:
     pair_angle_tol_arcsec_mixed_detector: 300.0
     seed_rms_gate_arcsec: 60.0
     seed_max_gate_arcsec: 180.0
+    expansion_policy: predicted_xy
+    geometry_only_allowed: false
+    reacquire_expansion_policy: seed_attitude_only
+    reacquire_geometry_only_allowed: true
     expand_angular_gate_arcsec: 120.0
     expand_pixel_gate_pix: 10.0
     min_expanded_matches: 5
@@ -563,6 +587,14 @@ match:
     max_seed_attitudes: 2000
     min_edge_arcsec: 0.0
     max_edge_deg: .inf
+    ambiguity_min_score_margin: 1.0
+    detector_mean_warn_pix: 5.0
+    detector_mean_reject_pix: 25.0
+    detector_rms_reject_pix: 25.0
+    detector_max_reject_pix: 50.0
+    mixed_detector_reject_on_detector_warning: true
+    photometric_rank_weight: 0.0
+    seed_consistency_penalty: 1.0e-6
 ```
 
 `local_pyramid.enabled` is intentionally shown for configuration readability,

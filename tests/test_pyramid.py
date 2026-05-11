@@ -395,6 +395,178 @@ def test_match_stars_reports_pyramid_recovery_when_nearest_gate_misses_shifted_p
     ]
 
 
+def test_reacquire_uses_geometry_only_expansion_when_predictions_are_stale():
+    refs = _reference_stars()
+    stale_refs = _reference_stars()
+    for ref in stale_refs:
+        detector_id = ref.detector_ids_visible[0]
+        pred_x, pred_y = ref.predicted_xy[detector_id]
+        ref.predicted_xy[detector_id] = (pred_x + 200.0, pred_y - 150.0)
+
+    observed = _observed_from_refs(refs)
+    cfg = _cfg()
+    cfg["match"]["algorithm"] = "predicted_position_with_pyramid_reacquire"
+    cfg["match"]["validate_max_residual_pix"] = 2.0
+    cfg["match"]["local_pyramid"]["expand_pixel_gate_pix"] = 2.0
+    cfg["match"]["local_pyramid"]["reacquire_expansion_policy"] = "seed_attitude_only"
+    cfg["match"]["local_pyramid"]["reacquire_geometry_only_allowed"] = True
+    ctx = MatchingContext(
+        mode="tracking",
+        time_s=0.0,
+        observed_stars=observed,
+        prior_attitude_q=None,
+        detector_layout={},
+        optical_model={},
+        matching_cfg=cfg["match"],
+        reference_stars=stale_refs,
+    )
+
+    result = match_stars(ctx, stale_refs, cfg)
+
+    assert result.success
+    assert result.debug["selected_strategy"] == "local_pyramid"
+    assert result.debug["num_predicted_position_matches"] == 0
+    assert [match.catalog_id for match in result.matched] == [ref.catalog_id for ref in refs]
+    assert all(match.flags["residual_pix"] is None for match in result.matched)
+    assert result.debug["pyramid_debug"]["pyramid_mode"] == "reacquire"
+    assert result.debug["pyramid_debug"]["best_expansion"]["expansion_policy"] == "seed_attitude_only"
+
+
+def test_local_pyramid_rejects_ambiguous_geometry_only_hypotheses():
+    refs = _reference_stars()[:4]
+    duplicate_refs = []
+    for index, ref in enumerate(refs):
+        duplicate_refs.append(
+            ReferenceStar(
+                catalog_id=3000 + index,
+                time_s=ref.time_s,
+                los_inertial=np.array(ref.los_inertial, copy=True),
+                mag_g=ref.mag_g,
+                detector_ids_visible=list(ref.detector_ids_visible),
+                predicted_xy={},
+                predicted_valid={},
+                weight_hint=ref.weight_hint,
+            )
+        )
+
+    observed = _observed_from_refs(refs)
+    cfg = _cfg()
+    cfg["match"]["local_pyramid"]["seed_scopes"] = ["single_detector"]
+    cfg["match"]["local_pyramid"]["expansion_policy"] = "seed_attitude_only"
+    cfg["match"]["local_pyramid"]["geometry_only_allowed"] = True
+    cfg["match"]["local_pyramid"]["ambiguity_min_score_margin"] = 1.0
+
+    result = match_local_pyramid(observed, refs + duplicate_refs, cfg, pyramid_mode="reacquire")
+
+    assert not result.success
+    assert result.matched == []
+    assert result.debug["rejection_reason"] == "ambiguous_seed_hypotheses"
+    assert result.debug["ambiguous"] is True
+    assert result.debug["num_valid_seed_hypotheses"] > 1
+    assert result.debug["ambiguity_margin"] == 0.0
+    assert result.debug["second_best_seed"] is not None
+
+
+def test_mixed_detector_seed_rejects_coherent_detector_offset_when_configured():
+    refs = _reference_stars(detector_id="guide_left")[:4]
+    for index, ref in enumerate(refs):
+        detector_id = "guide_left" if index < 2 else "guide_right"
+        x, y = ref.predicted_xy["guide_left"]
+        ref.detector_ids_visible = [detector_id]
+        ref.predicted_xy = {detector_id: (x, y)}
+        ref.predicted_valid = {detector_id: True}
+
+    observed = _observed_from_refs(refs)
+    offset_refs = []
+    for ref in refs:
+        detector_id = ref.detector_ids_visible[0]
+        x, y = ref.predicted_xy[detector_id]
+        if detector_id == "guide_right":
+            x += 20.0
+        offset_refs.append(
+            ReferenceStar(
+                catalog_id=ref.catalog_id,
+                time_s=ref.time_s,
+                los_inertial=np.array(ref.los_inertial, copy=True),
+                mag_g=ref.mag_g,
+                detector_ids_visible=list(ref.detector_ids_visible),
+                predicted_xy={detector_id: (x, y)},
+                predicted_valid={detector_id: True},
+                weight_hint=ref.weight_hint,
+            )
+        )
+
+    cfg = _cfg()
+    cfg["match"]["local_pyramid"]["seed_scopes"] = ["mixed_detector"]
+    cfg["match"]["local_pyramid"]["expand_pixel_gate_pix"] = 50.0
+    cfg["match"]["local_pyramid"]["detector_mean_warn_pix"] = 5.0
+    cfg["match"]["local_pyramid"]["mixed_detector_reject_on_detector_warning"] = True
+
+    result = match_local_pyramid(observed, offset_refs, cfg)
+
+    assert not result.success
+    assert result.debug["rejection_reason"] == "detector_residual_reject"
+    assert result.debug["best_per_detector_residuals"]["guide_right"]["status"] == "warn"
+    assert result.debug["per_detector_residuals"]["guide_right"]["status"] == "warn"
+    assert result.debug["best_per_detector_residuals"]["guide_right"]["mean_norm_pix"] == 20.0
+
+
+def test_reacquire_seed_scope_override_is_mode_aware():
+    refs = _reference_stars(detector_id="guide_left")[:4]
+    for index, ref in enumerate(refs):
+        detector_id = "guide_left" if index < 2 else "guide_right"
+        x, y = ref.predicted_xy["guide_left"]
+        ref.detector_ids_visible = [detector_id]
+        ref.predicted_xy = {detector_id: (x, y)}
+        ref.predicted_valid = {detector_id: True}
+
+    observed = _observed_from_refs(refs)
+    cfg = _cfg()
+    cfg["match"]["local_pyramid"]["seed_scopes"] = ["single_detector"]
+    cfg["match"]["local_pyramid"]["reacquire_seed_scopes"] = ["mixed_detector"]
+
+    result = match_local_pyramid(observed, refs, cfg, pyramid_mode="reacquire")
+
+    assert result.success
+    assert result.debug["pyramid_seed_scope_order"] == ["mixed_detector"]
+    assert result.debug["best_seed_scope"] == "mixed_detector"
+    assert [match.catalog_id for match in result.matched] == [ref.catalog_id for ref in refs]
+
+
+def test_photometric_rank_penalty_breaks_geometry_only_tie_when_enabled():
+    refs = _reference_stars()[:4]
+    duplicate_refs = []
+    for index, ref in enumerate(refs):
+        duplicate_refs.append(
+            ReferenceStar(
+                catalog_id=3000 + index,
+                time_s=ref.time_s,
+                los_inertial=np.array(ref.los_inertial, copy=True),
+                mag_g=20.0 + index,
+                detector_ids_visible=list(ref.detector_ids_visible),
+                predicted_xy={},
+                predicted_valid={},
+                weight_hint=ref.weight_hint,
+            )
+        )
+
+    observed = _observed_from_refs(refs)
+    cfg = _cfg()
+    cfg["match"]["local_pyramid"]["seed_scopes"] = ["single_detector"]
+    cfg["match"]["local_pyramid"]["expansion_policy"] = "seed_attitude_only"
+    cfg["match"]["local_pyramid"]["geometry_only_allowed"] = True
+    cfg["match"]["local_pyramid"]["photometric_rank_weight"] = 25.0
+    cfg["match"]["local_pyramid"]["ambiguity_min_score_margin"] = 0.1
+
+    result = match_local_pyramid(observed, refs + duplicate_refs, cfg, pyramid_mode="reacquire")
+
+    assert result.success
+    assert result.debug["ambiguous"] is False
+    assert [match.catalog_id for match in result.matched] == [ref.catalog_id for ref in refs]
+    assert all(match.flags["photometric_rank_penalty"] == 0.0 for match in result.matched)
+    assert result.debug["best_expansion"]["photometric_rank_weight"] == 25.0
+
+
 def test_local_pyramid_prefers_detector_local_seed_before_mixed_seed():
     refs = _reference_stars(detector_id="guide_left")
     observed = _observed_from_refs(refs)
