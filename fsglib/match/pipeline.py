@@ -290,7 +290,10 @@ def match_stars(
         from fsglib.match.pyramid import match_local_pyramid
 
         if algorithm in {"local_pyramid", "predicted_position_and_local_pyramid"} or not local_result.success:
-            pyramid_result = match_local_pyramid(ctx.observed_stars, reference_stars, cfg)
+            if ctx.match_cache is None:
+                pyramid_result = match_local_pyramid(ctx.observed_stars, reference_stars, cfg)
+            else:
+                pyramid_result = match_local_pyramid(ctx.observed_stars, reference_stars, cfg, cache=ctx.match_cache)
 
     matched = local_matches
     selected_strategy = "predicted_position"

@@ -13,6 +13,7 @@ from fsglib.common.types import (
 from fsglib.ephemeris.pipeline import build_reference_stars
 from fsglib.ephemeris.types import EphemerisContext
 from fsglib.extract.pipeline import extract_stars
+from fsglib.match.cache import get_match_cache
 from fsglib.match.pipeline import match_stars
 from fsglib.pipeline.convert import candidates_to_observed
 from fsglib.pipeline.evaluate import evaluate_frame_result
@@ -159,6 +160,7 @@ def run_single_frame_init(
         matching_cfg=cfg.get("match", {}),
         boresight_inertial=eph_ctx.boresight_inertial,
         reference_stars=ref,
+        match_cache=get_match_cache(models, cfg),
     )
     matching = match_stars(match_ctx, ref, cfg)
     timings["match"] = perf_counter() - t0
