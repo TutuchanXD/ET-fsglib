@@ -224,8 +224,12 @@ def _solve_wahba_svd(body_vectors: list[np.ndarray], inertial_vectors: list[np.n
     return c_ib
 
 
-def _select_observed(observed_stars: list[ObservedStar], cfg: dict) -> tuple[list[ObservedStar], list[int]]:
-    max_observed = int(_cfg_value(cfg, "max_observed_stars", 40) or 0)
+def _select_observed(
+    observed_stars: list[ObservedStar],
+    cfg: dict,
+    pyramid_mode: str | None = None,
+) -> tuple[list[ObservedStar], list[int]]:
+    max_observed = int(_cfg_value(cfg, "max_observed_stars", 40, pyramid_mode) or 0)
     indexed = list(enumerate(observed_stars))
     indexed.sort(
         key=lambda item: (
@@ -280,8 +284,12 @@ def _photometric_rank_penalty(
     return float(abs(obs_rank - ref_rank) / float(rank_count - 1))
 
 
-def _select_reference(reference_stars: list[ReferenceStar], cfg: dict) -> tuple[list[ReferenceStar], list[int]]:
-    max_reference = int(_cfg_value(cfg, "max_reference_stars", 300) or 0)
+def _select_reference(
+    reference_stars: list[ReferenceStar],
+    cfg: dict,
+    pyramid_mode: str | None = None,
+) -> tuple[list[ReferenceStar], list[int]]:
+    max_reference = int(_cfg_value(cfg, "max_reference_stars", 300, pyramid_mode) or 0)
     indexed = list(enumerate(reference_stars))
     indexed.sort(key=_reference_sort_key)
     if max_reference > 0:
@@ -349,9 +357,13 @@ def _seed_pair_angles(stars: list[ObservedStar], seed: tuple[int, int, int, int]
     return angles
 
 
-def _seed_edges_within_limits(pair_angles: dict[tuple[int, int], float], cfg: dict) -> bool:
-    min_edge = _arcsec_to_rad(float(_cfg_value(cfg, "min_edge_arcsec", 0.0)))
-    max_edge_deg = float(_cfg_value(cfg, "max_edge_deg", np.inf))
+def _seed_edges_within_limits(
+    pair_angles: dict[tuple[int, int], float],
+    cfg: dict,
+    pyramid_mode: str | None = None,
+) -> bool:
+    min_edge = _arcsec_to_rad(float(_cfg_value(cfg, "min_edge_arcsec", 0.0, pyramid_mode)))
+    max_edge_deg = float(_cfg_value(cfg, "max_edge_deg", np.inf, pyramid_mode))
     max_edge = np.deg2rad(max_edge_deg) if np.isfinite(max_edge_deg) else np.inf
     return all(min_edge <= angle <= max_edge for angle in pair_angles.values())
 
@@ -772,7 +784,7 @@ def _build_result(
         for star in matched
         if star.flags.get("residual_pix") is not None
     ]
-    per_detector_residuals = debug.get("best_per_detector_residuals") if matched else None
+    per_detector_residuals = debug.get("best_per_detector_residuals")
     if per_detector_residuals is None:
         per_detector_residuals = _per_detector_residuals(matched, cfg)
     debug = {
@@ -854,8 +866,8 @@ def match_local_pyramid(
         debug["rejection_reason"] = "not_enough_reference_stars"
         return _build_result(observed_stars, reference_stars, [], cfg, debug)
 
-    selected_observed, selected_observed_indices = _select_observed(observed_stars, cfg)
-    selected_reference, selected_reference_indices = _select_reference(reference_stars, cfg)
+    selected_observed, selected_observed_indices = _select_observed(observed_stars, cfg, pyramid_mode)
+    selected_reference, selected_reference_indices = _select_reference(reference_stars, cfg, pyramid_mode)
     debug["num_observed_used"] = len(selected_observed)
     debug["num_reference_used"] = len(selected_reference)
 
@@ -872,7 +884,7 @@ def match_local_pyramid(
         debug["pair_index_cache"] = cache.pair_index_debug()
     debug["num_reference_pairs"] = len(pair_index.pairs)
 
-    scopes = list(_cfg_value(cfg, "seed_scopes", ["single_detector", "mixed_detector"]))
+    scopes = list(_cfg_value(cfg, "seed_scopes", ["single_detector", "mixed_detector"], pyramid_mode))
     debug["pyramid_seed_scope_order"] = scopes
     max_observed_pyramids = int(_cfg_value(cfg, "max_observed_pyramids", 5000, pyramid_mode) or 0)
     max_candidates_per_seed = int(_cfg_value(cfg, "max_candidates_per_observed_seed", 200, pyramid_mode) or 0)
@@ -894,7 +906,7 @@ def match_local_pyramid(
         for obs_seed in _iter_observed_pyramids(selected_observed, scope, max_observed_pyramids):
             debug["num_observed_pyramids_tested"] += 1
             pair_angles = _seed_pair_angles(selected_observed, obs_seed)
-            if not _seed_edges_within_limits(pair_angles, cfg):
+            if not _seed_edges_within_limits(pair_angles, cfg, pyramid_mode):
                 debug["seed_rejection_counters"]["edge_limit"] += 1
                 continue
             ref_candidates = _find_reference_pyramid_candidates(

@@ -507,7 +507,30 @@ def test_mixed_detector_seed_rejects_coherent_detector_offset_when_configured():
     assert not result.success
     assert result.debug["rejection_reason"] == "detector_residual_reject"
     assert result.debug["best_per_detector_residuals"]["guide_right"]["status"] == "warn"
+    assert result.debug["per_detector_residuals"]["guide_right"]["status"] == "warn"
     assert result.debug["best_per_detector_residuals"]["guide_right"]["mean_norm_pix"] == 20.0
+
+
+def test_reacquire_seed_scope_override_is_mode_aware():
+    refs = _reference_stars(detector_id="guide_left")[:4]
+    for index, ref in enumerate(refs):
+        detector_id = "guide_left" if index < 2 else "guide_right"
+        x, y = ref.predicted_xy["guide_left"]
+        ref.detector_ids_visible = [detector_id]
+        ref.predicted_xy = {detector_id: (x, y)}
+        ref.predicted_valid = {detector_id: True}
+
+    observed = _observed_from_refs(refs)
+    cfg = _cfg()
+    cfg["match"]["local_pyramid"]["seed_scopes"] = ["single_detector"]
+    cfg["match"]["local_pyramid"]["reacquire_seed_scopes"] = ["mixed_detector"]
+
+    result = match_local_pyramid(observed, refs, cfg, pyramid_mode="reacquire")
+
+    assert result.success
+    assert result.debug["pyramid_seed_scope_order"] == ["mixed_detector"]
+    assert result.debug["best_seed_scope"] == "mixed_detector"
+    assert [match.catalog_id for match in result.matched] == [ref.catalog_id for ref in refs]
 
 
 def test_photometric_rank_penalty_breaks_geometry_only_tie_when_enabled():
