@@ -226,6 +226,49 @@ def _match_with_triangle(
     return matched
 
 
+def _mean_residual_pix(matched: list[MatchedStar]) -> float | None:
+    residuals = [
+        float(match.flags["residual_pix"])
+        for match in matched
+        if match.flags.get("residual_pix") is not None
+    ]
+    return float(sum(residuals) / len(residuals)) if residuals else None
+
+
+def _compare_nearest_and_pyramid(
+    nearest_matches: list[MatchedStar],
+    pyramid_matches: list[MatchedStar],
+) -> dict:
+    nearest_by_source = {match.source_id: match.catalog_id for match in nearest_matches}
+    pyramid_by_source = {match.source_id: match.catalog_id for match in pyramid_matches}
+    source_ids = sorted(set(nearest_by_source) | set(pyramid_by_source))
+    disagreements = [
+        {
+            "source_id": source_id,
+            "nearest_catalog_id": nearest_by_source.get(source_id),
+            "pyramid_catalog_id": pyramid_by_source.get(source_id),
+        }
+        for source_id in source_ids
+        if nearest_by_source.get(source_id) != pyramid_by_source.get(source_id)
+    ]
+    nearest_mean_residual_pix = _mean_residual_pix(nearest_matches)
+    pyramid_mean_residual_pix = _mean_residual_pix(pyramid_matches)
+    pyramid_has_lower_mean_residual_pix = None
+    if nearest_mean_residual_pix is not None and pyramid_mean_residual_pix is not None:
+        pyramid_has_lower_mean_residual_pix = pyramid_mean_residual_pix < nearest_mean_residual_pix
+
+    return {
+        "nearest_matched_count": len(nearest_matches),
+        "pyramid_matched_count": len(pyramid_matches),
+        "matched_count_delta": len(pyramid_matches) - len(nearest_matches),
+        "same_catalog_id_mapping": len(disagreements) == 0,
+        "catalog_id_disagreements": disagreements,
+        "nearest_mean_residual_pix": nearest_mean_residual_pix,
+        "pyramid_mean_residual_pix": pyramid_mean_residual_pix,
+        "pyramid_has_lower_mean_residual_pix": pyramid_has_lower_mean_residual_pix,
+    }
+
+
 def match_stars(
     ctx: MatchingContext,
     reference_stars: list[ReferenceStar],
@@ -312,6 +355,9 @@ def match_stars(
             "mean_residual_pix": mean_residual_pix,
             "stars_per_detector": stars_per_detector,
             "pyramid_debug": None if pyramid_result is None else pyramid_result.debug,
+            "nearest_vs_pyramid": None
+            if pyramid_result is None
+            else _compare_nearest_and_pyramid(local_matches, pyramid_result.matched),
         },
     )
     return result

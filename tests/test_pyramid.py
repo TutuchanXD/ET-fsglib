@@ -109,6 +109,28 @@ def test_local_pyramid_matches_rotated_reference_stars():
     assert result.debug["best_expanded_matches"] == 5
 
 
+def test_local_pyramid_reports_seed_and_expansion_audit():
+    refs = _reference_stars()
+    observed = _observed_from_refs(refs, _rotation_z(np.deg2rad(0.2)))
+
+    result = match_local_pyramid(observed, refs, _cfg())
+
+    assert result.success
+    seed_debug = result.debug["best_seed"]
+    assert seed_debug["scope"] == "single_detector"
+    assert seed_debug["detector_ids"] == [0]
+    assert seed_debug["observed_source_ids"] == [2000, 2001, 2002, 2003]
+    assert seed_debug["reference_catalog_ids"] == [1000, 1001, 1002, 1003]
+    assert len(seed_debug["pair_angle_residuals_arcsec"]) == 6
+    assert seed_debug["rms_arcsec"] == result.debug["best_seed_rms_arcsec"]
+
+    expansion_debug = result.debug["best_expansion"]
+    assert expansion_debug["num_edges_before_assignment"] >= len(result.matched)
+    assert expansion_debug["num_edges_after_assignment"] == len(result.matched)
+    assert expansion_debug["num_pixel_gate_rejects"] > 0
+    assert "num_angular_gate_rejects" in expansion_debug
+
+
 def test_local_pyramid_rejects_false_observed_star_during_expansion():
     refs = _reference_stars()[:4]
     observed = _observed_from_refs(refs)
@@ -180,6 +202,54 @@ def test_match_stars_hybrid_keeps_predicted_position_on_equal_support():
     assert result.debug["num_predicted_position_matches"] == 5
     assert result.debug["num_local_pyramid_matches"] == 5
     assert [match.flags["match_mode"] for match in result.matched] == ["predicted_position"] * 5
+    assert result.debug["nearest_vs_pyramid"]["nearest_matched_count"] == 5
+    assert result.debug["nearest_vs_pyramid"]["pyramid_matched_count"] == 5
+    assert result.debug["nearest_vs_pyramid"]["same_catalog_id_mapping"] is True
+    assert result.debug["nearest_vs_pyramid"]["catalog_id_disagreements"] == []
+
+
+def test_match_stars_reports_pyramid_recovery_when_nearest_gate_misses_shifted_predictions():
+    refs = _reference_stars()
+    for ref in refs:
+        detector_id = ref.detector_ids_visible[0]
+        pred_x, pred_y = ref.predicted_xy[detector_id]
+        ref.predicted_xy[detector_id] = (pred_x + 8.0, pred_y - 4.0)
+
+    observed = _observed_from_refs(_reference_stars())
+    cfg = _cfg()
+    cfg["match"]["algorithm"] = "local_pyramid"
+    cfg["match"]["validate_max_residual_pix"] = 2.0
+    cfg["match"]["local_pyramid"]["expand_pixel_gate_pix"] = 12.0
+    ctx = MatchingContext(
+        mode="tracking",
+        time_s=0.0,
+        observed_stars=observed,
+        prior_attitude_q=None,
+        detector_layout={},
+        optical_model={},
+        matching_cfg=cfg["match"],
+        reference_stars=refs,
+    )
+
+    result = match_stars(ctx, refs, cfg)
+
+    assert result.success
+    assert result.debug["selected_strategy"] == "local_pyramid"
+    assert result.debug["num_predicted_position_matches"] == 0
+    assert result.debug["num_local_pyramid_matches"] == 5
+    assert [match.catalog_id for match in result.matched] == [ref.catalog_id for ref in refs]
+
+    comparison = result.debug["nearest_vs_pyramid"]
+    assert comparison["nearest_matched_count"] == 0
+    assert comparison["pyramid_matched_count"] == 5
+    assert comparison["same_catalog_id_mapping"] is False
+    assert comparison["catalog_id_disagreements"] == [
+        {"source_id": 2000, "nearest_catalog_id": None, "pyramid_catalog_id": 1000},
+        {"source_id": 2001, "nearest_catalog_id": None, "pyramid_catalog_id": 1001},
+        {"source_id": 2002, "nearest_catalog_id": None, "pyramid_catalog_id": 1002},
+        {"source_id": 2003, "nearest_catalog_id": None, "pyramid_catalog_id": 1003},
+        {"source_id": 2004, "nearest_catalog_id": None, "pyramid_catalog_id": 1004},
+    ]
 
 
 def test_local_pyramid_prefers_detector_local_seed_before_mixed_seed():

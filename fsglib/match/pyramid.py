@@ -300,27 +300,40 @@ def _build_expansion_edges(
     observed_stars: list[ObservedStar],
     reference_stars: list[ReferenceStar],
     cfg: dict,
-) -> list[ExpansionEdge]:
+) -> tuple[list[ExpansionEdge], dict[str, float | int]]:
     angular_gate = float(_cfg_value(cfg, "expand_angular_gate_arcsec", 120.0))
     pixel_gate = float(_cfg_value(cfg, "expand_pixel_gate_pix", cfg.get("match", {}).get("validate_max_residual_pix", 25.0)))
     angular_sigma = max(angular_gate, 1.0)
     pixel_sigma = max(pixel_gate, 1.0)
+    audit: dict[str, float | int] = {
+        "pixel_gate_pix": pixel_gate,
+        "angular_gate_arcsec": angular_gate,
+        "num_missing_predicted_xy": 0,
+        "num_pixel_gate_rejects": 0,
+        "num_angular_gate_rejects": 0,
+        "num_edges_before_assignment": 0,
+        "num_edges_after_assignment": 0,
+    }
 
     edges: list[ExpansionEdge] = []
     for obs_index, obs in enumerate(observed_stars):
         for ref_index, ref in enumerate(reference_stars):
             pixel_residual, predicted_xy = _predicted_pixel_residual(obs, ref)
             if pixel_residual is None:
+                audit["num_missing_predicted_xy"] += 1
                 continue
             if pixel_residual > pixel_gate:
+                audit["num_pixel_gate_rejects"] += 1
                 continue
             ref_body = seed.c_ib @ np.asarray(ref.los_inertial, dtype=np.float64)
             angular_residual = _angle_arcsec(ref_body, obs.los_body)
             if angular_residual > angular_gate:
+                audit["num_angular_gate_rejects"] += 1
                 continue
             cost = (angular_residual / angular_sigma) + (pixel_residual / pixel_sigma)
             edges.append((float(cost), obs_index, ref_index, float(angular_residual), pixel_residual, predicted_xy))
-    return edges
+    audit["num_edges_before_assignment"] = len(edges)
+    return edges, audit
 
 
 def _assign_expansion_edges(
@@ -425,6 +438,30 @@ def _per_detector_residuals(matched: list[MatchedStar]) -> dict[str, dict[str, f
     return payload
 
 
+def _build_seed_debug(
+    seed: SeedSolution,
+    observed_stars: list[ObservedStar],
+    reference_stars: list[ReferenceStar],
+) -> dict[str, Any]:
+    return {
+        "scope": seed.seed_scope,
+        "detector_ids": list(seed.detector_ids),
+        "observed_indices": list(seed.observed_indices),
+        "reference_indices": list(seed.reference_indices),
+        "observed_source_ids": [
+            observed_stars[index].source_id
+            for index in seed.observed_indices
+        ],
+        "reference_catalog_ids": [
+            reference_stars[index].catalog_id
+            for index in seed.reference_indices
+        ],
+        "pair_angle_residuals_arcsec": list(seed.pair_angle_residuals_arcsec),
+        "rms_arcsec": seed.seed_rms_arcsec,
+        "max_arcsec": seed.seed_max_arcsec,
+    }
+
+
 def _build_result(
     observed_stars: list[ObservedStar],
     reference_stars: list[ReferenceStar],
@@ -484,7 +521,15 @@ def match_local_pyramid(
         "best_seed_scope": None,
         "best_seed_detector_ids": None,
         "best_seed_rms_arcsec": None,
+        "best_seed": None,
+        "best_expansion": None,
         "best_expanded_matches": 0,
+        "seed_rejection_counters": {
+            "edge_limit": 0,
+            "seed_rms_gate": 0,
+            "seed_max_gate": 0,
+            "under_min_expanded": 0,
+        },
         "rejection_reason": None,
         "fallback_strategy": None,
     }
@@ -496,7 +541,7 @@ def match_local_pyramid(
         debug["rejection_reason"] = "not_enough_reference_stars"
         return _build_result(observed_stars, reference_stars, [], cfg, debug)
 
-    selected_observed, _ = _select_observed(observed_stars, cfg)
+    selected_observed, selected_observed_indices = _select_observed(observed_stars, cfg)
     selected_reference, selected_reference_indices = _select_reference(reference_stars, cfg)
     debug["num_observed_used"] = len(selected_observed)
     debug["num_reference_used"] = len(selected_reference)
@@ -522,6 +567,7 @@ def match_local_pyramid(
             debug["num_observed_pyramids_tested"] += 1
             pair_angles = _seed_pair_angles(selected_observed, obs_seed)
             if not _seed_edges_within_limits(pair_angles, cfg):
+                debug["seed_rejection_counters"]["edge_limit"] += 1
                 continue
             ref_candidates = _find_reference_pyramid_candidates(
                 pair_index,
@@ -543,13 +589,20 @@ def match_local_pyramid(
                     pair_residuals,
                     scope,
                 )
-                if seed.seed_rms_arcsec > seed_rms_gate or seed.seed_max_arcsec > seed_max_gate:
+                if seed.seed_rms_arcsec > seed_rms_gate:
+                    debug["seed_rejection_counters"]["seed_rms_gate"] += 1
                     continue
+                if seed.seed_max_arcsec > seed_max_gate:
+                    debug["seed_rejection_counters"]["seed_max_gate"] += 1
+                    continue
+                seed.observed_indices = tuple(selected_observed_indices[index] for index in obs_seed)
                 seed.reference_indices = original_ref_seed
-                edges = _build_expansion_edges(seed, observed_stars, reference_stars, cfg)
+                edges, expansion_debug = _build_expansion_edges(seed, observed_stars, reference_stars, cfg)
                 assigned = _assign_expansion_edges(edges, observed_stars)
+                expansion_debug["num_edges_after_assignment"] = len(assigned)
                 matched = _build_matched_stars(seed, assigned, observed_stars, reference_stars)
                 if len(matched) < min_expanded:
+                    debug["seed_rejection_counters"]["under_min_expanded"] += 1
                     continue
                 residuals = [
                     float(star.flags["residual_pix"])
@@ -558,7 +611,7 @@ def match_local_pyramid(
                 ]
                 rms_pix = float(np.sqrt(np.mean(np.square(residuals)))) if residuals else np.inf
                 rank = (len(matched), -rms_pix, -seed.seed_rms_arcsec)
-                payload = (rank, seed, matched)
+                payload = (rank, seed, matched, expansion_debug)
                 if scope_best is None or rank > scope_best[0]:
                     scope_best = payload
             if max_seed_attitudes > 0 and debug["num_seed_attitudes_scored"] >= max_seed_attitudes:
@@ -571,9 +624,11 @@ def match_local_pyramid(
         debug["rejection_reason"] = "no_valid_pyramid_seed"
         return _build_result(observed_stars, reference_stars, [], cfg, debug)
 
-    _, best_seed, matched = best_payload
+    _, best_seed, matched, best_expansion = best_payload
     debug["best_seed_scope"] = best_seed.seed_scope
     debug["best_seed_detector_ids"] = list(best_seed.detector_ids)
     debug["best_seed_rms_arcsec"] = best_seed.seed_rms_arcsec
+    debug["best_seed"] = _build_seed_debug(best_seed, observed_stars, reference_stars)
+    debug["best_expansion"] = best_expansion
     debug["best_expanded_matches"] = len(matched)
     return _build_result(observed_stars, reference_stars, matched, cfg, debug)
