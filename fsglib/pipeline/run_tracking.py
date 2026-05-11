@@ -17,7 +17,7 @@ from fsglib.common.types import (
 )
 from fsglib.ephemeris.pipeline import build_reference_stars
 from fsglib.extract.pipeline import extract_stars
-from fsglib.match.pipeline import associate_nearest, validate_match_hypothesis
+from fsglib.match.pipeline import match_stars, validate_match_hypothesis
 from fsglib.pipeline.convert import candidates_to_observed
 from fsglib.pipeline.evaluate import evaluate_frame_result, summarize_sequence_result
 from fsglib.pipeline.run_init import _build_ephemeris_context, run_single_frame_init
@@ -184,7 +184,7 @@ def _build_tracking_frame(
         boresight_inertial=eph_ctx.boresight_inertial,
         reference_stars=ref,
     )
-    matching = associate_nearest(obs, ref, cfg)
+    matching = match_stars(match_ctx, ref, cfg)
     matching.mode = "tracking"
     timings["match"] = perf_counter() - t0
 

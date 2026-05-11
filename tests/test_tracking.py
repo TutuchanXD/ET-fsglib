@@ -1,11 +1,14 @@
 import json
+from types import SimpleNamespace
 
 import numpy as np
 
 from fsglib.common.types import (
     AttitudeSolution,
     FrameResult,
+    MatchedStar,
     MatchingResult,
+    ObservedStar,
     PreprocessedFrame,
     RawFrame,
     SequenceResult,
@@ -13,8 +16,9 @@ from fsglib.common.types import (
     StarCandidate,
     TrackState,
 )
+from fsglib.ephemeris.types import ReferenceStar
 from fsglib.pipeline.evaluate import evaluate_dataset
-from fsglib.pipeline.run_tracking import update_state_machine, update_track_table
+from fsglib.pipeline.run_tracking import _build_tracking_frame, update_state_machine, update_track_table
 
 
 def _dummy_frame_result(valid: bool, requested_mode: str, matched: int, rms: float, runtime_s: float, boresight_error: float | None = None) -> FrameResult:
@@ -88,6 +92,122 @@ def test_update_state_machine_handles_reacquire_and_lost():
     state = update_state_machine(state, "init", bad_frame, {"tracking": {"reacquire_after_failures": 2, "lost_after_init_failures": 3}}, "init_failed")
     assert state.mode == "lost"
     assert state.lost_count == 1
+
+
+def test_build_tracking_frame_uses_configured_matching_algorithm(monkeypatch):
+    raw = RawFrame(detector_id=0, image=np.ones((3, 3)), time_s=12.0)
+    pre = PreprocessedFrame(
+        detector_id=0,
+        image=np.ones((3, 3)),
+        background=0.0,
+        noise_map=np.ones((3, 3)),
+        valid_mask=np.ones((3, 3), dtype=bool),
+    )
+    observed = [
+        ObservedStar(
+            detector_id=0,
+            source_id=1,
+            x=10.0,
+            y=20.0,
+            los_body=np.array([0.0, 0.0, 1.0]),
+            flux=100.0,
+            snr=20.0,
+        )
+    ]
+    reference = [
+        ReferenceStar(
+            catalog_id=42,
+            time_s=12.0,
+            los_inertial=np.array([0.0, 0.0, 1.0]),
+            mag_g=10.0,
+            detector_ids_visible=[0],
+            predicted_xy={0: (10.0, 20.0)},
+            predicted_valid={0: True},
+            weight_hint=1.0,
+        )
+    ]
+    matched = [
+        MatchedStar(
+            detector_id=0,
+            source_id=1,
+            catalog_id=42,
+            los_body=observed[0].los_body,
+            los_inertial=reference[0].los_inertial,
+            weight=1.0,
+            match_score=1.0,
+            flags={"match_mode": "local_pyramid", "observed_xy": (10.0, 20.0), "residual_pix": 0.0},
+        )
+    ]
+    cfg = {
+        "layout": {"default_detector_id": 0},
+        "match": {
+            "algorithm": "local_pyramid",
+            "validate_min_support": 1,
+            "validate_max_residual_pix": 5.0,
+            "enforce_unique_assignment": True,
+        },
+        "attitude": {},
+        "tracking": {"max_attitude_jump_arcsec": 100.0},
+    }
+    called = {"local_pyramid": False}
+
+    monkeypatch.setattr("fsglib.pipeline.run_tracking.load_npz_frame", lambda *_args, **_kwargs: raw)
+    monkeypatch.setattr("fsglib.pipeline.run_tracking.preprocess_frame", lambda *_args, **_kwargs: pre)
+    monkeypatch.setattr("fsglib.pipeline.run_tracking.extract_stars", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr("fsglib.pipeline.run_tracking.candidates_to_observed", lambda *_args, **_kwargs: observed)
+    monkeypatch.setattr(
+        "fsglib.pipeline.run_tracking.predict_catalog_positions",
+        lambda *_args, **_kwargs: (reference, SimpleNamespace(boresight_inertial=np.array([0.0, 0.0, 1.0]))),
+    )
+
+    def fake_match_local_pyramid(observed_stars, reference_stars, cfg_arg):
+        called["local_pyramid"] = True
+        assert observed_stars is observed
+        assert reference_stars is reference
+        assert cfg_arg is cfg
+        return MatchingResult(
+            matched=matched,
+            unmatched_observed_ids=[],
+            unmatched_catalog_ids=[],
+            mode="tracking",
+            success=True,
+            score=1.0,
+            debug={"selected_strategy": "local_pyramid"},
+        )
+
+    monkeypatch.setattr("fsglib.match.pyramid.match_local_pyramid", fake_match_local_pyramid)
+    monkeypatch.setattr(
+        "fsglib.pipeline.run_tracking.solve_attitude",
+        lambda *_args, **_kwargs: AttitudeSolution(
+            q_ib=np.array([1.0, 0.0, 0.0, 0.0]),
+            c_ib=np.eye(3),
+            euler_zyx=None,
+            valid=True,
+            mode="tracking",
+            num_matched=1,
+            residual_rms_arcsec=0.0,
+            residual_max_arcsec=0.0,
+        ),
+    )
+    monkeypatch.setattr(
+        "fsglib.pipeline.run_tracking.validate_match_hypothesis",
+        lambda *_args, **_kwargs: (True, {"reason": "ok"}),
+    )
+    monkeypatch.setattr("fsglib.pipeline.run_tracking.evaluate_frame_result", lambda *_args, **_kwargs: None)
+
+    frame = _build_tracking_frame(
+        npz_path="frame.npz",
+        cfg=cfg,
+        models={"projector": object(), "catalog": object()},
+        dataset_ctx=SimpleNamespace(batch_root="batch0"),
+        prior_q=np.array([1.0, 0.0, 0.0, 0.0]),
+        track_states={42: TrackState(42, 0, (10.0, 20.0), 0.0)},
+    )
+
+    assert called["local_pyramid"]
+    assert frame.matching.debug["algorithm"] == "local_pyramid"
+    assert frame.matching.debug["selected_strategy"] == "local_pyramid"
+    assert [star.catalog_id for star in frame.matching.matched] == [42]
 
 
 def test_evaluate_dataset_aggregates_batches(tmp_path, monkeypatch):
