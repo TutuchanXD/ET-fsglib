@@ -7,6 +7,21 @@ from astropy import units as astropy_units
 
 from fsglib.ephemeris.types import CatalogStar
 
+
+def _optional_float(row, name: str) -> float | None:
+    if name not in row.index or pd.isna(row[name]):
+        return None
+    return float(row[name])
+
+
+def _first_optional_float(row, names: tuple[str, ...]) -> float | None:
+    for name in names:
+        value = _optional_float(row, name)
+        if value is not None:
+            return value
+    return None
+
+
 class HealpixCatalogProvider:
     """
     Catalog provider that loads Gaia DR3 stars from nested HEALPix CSV files.
@@ -86,6 +101,11 @@ class HealpixCatalogProvider:
                     pmra = float(row['pmra']) if pd.notna(row['pmra']) else 0.0
                     pmdec = float(row['pmdec']) if pd.notna(row['pmdec']) else 0.0
                     plx = float(row['parallax']) if pd.notna(row['parallax']) else 0.0
+                    ref_epoch = _optional_float(row, "ref_epoch")
+                    rv_km_s = _first_optional_float(
+                        row,
+                        ("radial_velocity", "radial_velocity_km_s", "rv_km_s", "rv"),
+                    )
                     
                     bp_rp = 0.0
                     if pd.notna(row['bp_mean_mag']) and pd.notna(row['rp_mean_mag']):
@@ -98,9 +118,10 @@ class HealpixCatalogProvider:
                         pm_ra_mas_per_yr=pmra,
                         pm_dec_mas_per_yr=pmdec,
                         parallax_mas=plx,
-                        rv_km_s=0.0,
+                        rv_km_s=rv_km_s,
                         mag_g=float(row['g_mean_mag']),
                         color_bp_rp=bp_rp,
+                        ref_epoch=ref_epoch,
                         meta={}
                     )
                     all_stars.append(star)

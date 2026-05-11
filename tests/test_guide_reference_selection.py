@@ -1,6 +1,7 @@
 import sys
 import types
 
+import numpy as np
 import pytest
 
 from fsglib.pipeline.run_guide_init import _build_reference_stars
@@ -51,6 +52,9 @@ def test_build_reference_stars_default_selection_preserves_topk_behavior(monkeyp
     reference, stats = _build_reference_stars(_cfg(), object(), object(), DummyGaiaSourceFilter)
 
     assert [star.catalog_id for star in reference] == [2, 1]
+    assert np.isclose(reference[0].weight_hint, 10.0 ** (-0.4 * 9.0))
+    assert reference[0].meta["weight_source"] == "gaia_g"
+    assert reference[0].meta["target_epoch"] == 2000.0
     assert DummyGaiaSourceFilter.calls == [{"g_mean_mag_max": 12.0}]
     assert stats["G1"]["num_reference_stars"] == 2
     assert stats["G1"]["num_reference_preselected"] == 2

@@ -481,11 +481,17 @@ path. Guide workflows use `et_coord` per-detector source queries instead.
 | `ephemeris.reference_selection_mode` | string | `visible_only` | active | `visible_only` keeps projected visible stars; `sim_rect_topk` additionally selects top-k by converted Kepler magnitude for init mode. |
 | `ephemeris.reference_topk` | int | `0` | active with `sim_rect_topk` | Maximum number of reference stars retained after visible projection. `0` disables the limit. |
 | `ephemeris.gaia_to_kp_poly_path` | path string or null | configured path | active | Optional NumPy polynomial coefficient file for Gaia G to Kepler magnitude conversion. Missing/unreadable files silently disable conversion. |
-| `ephemeris.enable_proper_motion` | bool | `true` | reserved | Proper-motion propagation is not implemented in `HealpixCatalogProvider`. |
+| `ephemeris.target_epoch` | float | `2000.0` | active | Target Julian year used when propagating generic Gaia catalog stars before projection. |
+| `ephemeris.reference_epoch_default` | float | `2016.0` | active | Fallback Gaia reference epoch when a catalog partition does not provide `ref_epoch`. |
+| `ephemeris.enable_proper_motion` | bool | `true` | active | Enables generic Gaia proper-motion propagation in `build_reference_stars`; guide workflows delegate epoch handling to `et_coord`. |
 | `ephemeris.enable_precession` | bool | `false` | reserved | Not implemented. |
 | `ephemeris.enable_nutation` | bool | `false` | reserved | Not implemented. |
 | `ephemeris.enable_dva` | bool | `false` | reserved | Not implemented. |
 | `ephemeris.enable_relativity` | bool | `false` | reserved | Not implemented. |
+
+Generic `ReferenceStar.meta` records original and propagated coordinates,
+reference/target epoch, proper-motion status, converted Kepler magnitude when
+available, and the `weight_source`/`flux_weight` used for `weight_hint`.
 
 ## `attitude`
 
@@ -624,7 +630,6 @@ behavior:
 - `match.validate_max_residual_arcsec`
 - `tracking.search_radius_pix`
 - `ephemeris.catalog_backend`
-- `ephemeris.enable_proper_motion`
 - `ephemeris.enable_precession`
 - `ephemeris.enable_nutation`
 - `ephemeris.enable_dva`
