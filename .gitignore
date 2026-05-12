@@ -17,6 +17,7 @@ outputs/
 data/
 plan/
 lis_indexes/
+docs/superpowers/
 *.lis_index.npz
 
 .DS_Store
