@@ -75,4 +75,4 @@
 - [x] Run full verification:
   - `pytest -q`
   - `git diff --check`
-- [ ] Commit, push `pipeline/pr05-guiding-state-machine`, and open a PR against `main`.
+- [x] Commit, push `pipeline/pr05-guiding-state-machine`, and open a PR against `main`.
