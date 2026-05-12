@@ -84,7 +84,7 @@ def _build_ephemeris_context(
                 dataset_ctx.batch_center_dec_deg,
             )
 
-    if mode == "tracking" and prior_attitude_q is not None:
+    if mode in {"tracking", "local_reacquire"} and prior_attitude_q is not None:
         boresight_inertial = _boresight_from_attitude(prior_attitude_q)
 
     if prior_attitude_q is None and dataset_ctx is not None:

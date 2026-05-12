@@ -4,6 +4,8 @@ import numpy as np
 from fsglib.common.coords import radec_to_unit_vector
 from fsglib.ephemeris.types import ReferenceStar
 
+_REGION_QUERY_MODES = {"init", "init_known_field", "local_reacquire"}
+
 
 @lru_cache(maxsize=4)
 def _load_gaia_to_kp_coefficients(poly_path: str) -> np.ndarray:
@@ -30,7 +32,7 @@ def _apply_reference_selection(
 ) -> list[ReferenceStar]:
     eph_cfg = cfg.get("ephemeris", {})
     selection_mode = eph_cfg.get("reference_selection_mode", "visible_only")
-    if mode != "init":
+    if mode not in _REGION_QUERY_MODES:
         return ref_stars
     if selection_mode != "sim_rect_topk":
         return ref_stars
@@ -49,7 +51,7 @@ def _apply_reference_selection(
     return sorted(ref_stars, key=_sort_key)[:reference_topk]
 
 def build_reference_stars(ctx, catalog_provider, projector, cfg):
-    if ctx.mode == "init":
+    if ctx.mode in _REGION_QUERY_MODES:
         catalog_stars = catalog_provider.query_region(
             boresight_vec=ctx.boresight_inertial,
             radius_deg=cfg["match"]["init_max_catalog_radius_deg"],

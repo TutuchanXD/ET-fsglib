@@ -1,7 +1,16 @@
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any
 import numpy as np
+
+class SolveMode(str, Enum):
+    INIT_KNOWN_FIELD = "init_known_field"
+    TRACKING = "tracking"
+    LOCAL_REACQUIRE = "local_reacquire"
+    LOST_IN_SPACE = "lost_in_space"
+    SAFE_LOST = "safe_lost"
+
 
 @dataclass
 class RawFrame:
@@ -141,16 +150,31 @@ class TrackState:
 
 @dataclass
 class SolveStateMachine:
-    mode: str
+    mode: str | SolveMode
     consecutive_tracking_failures: int = 0
     consecutive_init_failures: int = 0
+    consecutive_reacquire_failures: int = 0
+    consecutive_lost_in_space_failures: int = 0
     reacquire_count: int = 0
     lost_count: int = 0
+    safe_lost_count: int = 0
     transition_reason: str = "startup"
     total_tracking_frames: int = 0
     total_tracking_successes: int = 0
     total_init_frames: int = 0
     total_init_successes: int = 0
+    total_reacquire_frames: int = 0
+    total_reacquire_successes: int = 0
+    total_lost_in_space_frames: int = 0
+    total_lost_in_space_successes: int = 0
+    requested_mode: str | None = None
+    requested_match_algorithm: str | None = None
+    selected_match_strategy: str | None = None
+    validation_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.mode, SolveMode):
+            self.mode = self.mode.value
 
 @dataclass
 class AttitudeQuality:

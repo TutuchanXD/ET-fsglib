@@ -103,6 +103,12 @@ match:
 tracking:
   search_radius_pix: 10.0
   max_miss_count: 3
+  tracking_match_algorithm: "predicted_position"
+  local_reacquire_match_algorithm: "predicted_position_with_pyramid_reacquire"
+  lost_in_space_match_algorithm: "lost_in_space"
+  reacquire_after_tracking_failures: 2
+  lost_in_space_after_reacquire_failures: 3
+  safe_lost_after_lis_failures: 1
   reacquire_after_failures: 2
   lost_after_init_failures: 3
   max_attitude_jump_arcsec: 300.0
