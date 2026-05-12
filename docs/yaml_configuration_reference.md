@@ -492,6 +492,8 @@ path. Guide workflows use `et_coord` per-detector source queries instead.
 | `ephemeris.catalog_backend` | string | `healpix` | declared | Current `build_models` always creates `HealpixCatalogProvider`; no backend switch is implemented. |
 | `ephemeris.gaia_root_dir` | path string | `/home/cxgao/gaia_dr3_19mag` | active | Root directory of nested HEALPix Gaia CSV partitions for generic catalog queries. |
 | `ephemeris.mag_limit` | float | `15.0` | active | Faint-end Gaia G magnitude limit for generic catalog queries. |
+| `ephemeris.gaia_partition_cache_size` | int | `8` | active | Per-provider LRU cache size for generic Gaia HEALPix partition DataFrames. `0` disables caching. |
+| `ephemeris.missing_partition_policy` | string enum | `ignore` | active | Handling for missing or unreadable generic Gaia HEALPix partitions: `ignore`, `warn`, or `error`. |
 | `ephemeris.tracking_catalog_radius_deg` | float | `2.0` | active | Search radius used by generic tracking catalog query. |
 | `ephemeris.reference_selection_mode` | string | `visible_only` | active | `visible_only` keeps projected visible stars; `sim_rect_topk` additionally selects top-k by converted Kepler magnitude for init mode. |
 | `ephemeris.reference_topk` | int | `0` | active with `sim_rect_topk` | Maximum number of reference stars retained after visible projection. `0` disables the limit. |
@@ -504,9 +506,15 @@ path. Guide workflows use `et_coord` per-detector source queries instead.
 | `ephemeris.enable_dva` | bool | `false` | reserved | Not implemented. |
 | `ephemeris.enable_relativity` | bool | `false` | reserved | Not implemented. |
 
-Generic `ReferenceStar.meta` records original and propagated coordinates,
-reference/target epoch, proper-motion status, converted Kepler magnitude when
-available, and the `weight_source`/`flux_weight` used for `weight_hint`.
+Generic `HealpixCatalogProvider.last_query_stats` records candidate pixels,
+cache hit/miss/eviction pixels, missing/failed partitions, row counts, and the
+number of stars returned for the most recent query. Generic catalog
+`CatalogStar.meta` records catalog provenance including provider name, root
+directory, source file, HEALPix pixel/nside/order, query radius, and magnitude
+limit. Generic `ReferenceStar.meta` then records original and propagated
+coordinates, reference/target epoch, proper-motion status, converted Kepler
+magnitude when available, and the `weight_source`/`flux_weight` used for
+`weight_hint`.
 
 ## `attitude`
 
