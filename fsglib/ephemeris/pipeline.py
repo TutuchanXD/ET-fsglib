@@ -2,9 +2,6 @@ from functools import lru_cache
 import warnings
 
 import numpy as np
-from astropy import units as astropy_units
-from astropy.coordinates import Distance, SkyCoord
-from astropy.time import Time
 
 from fsglib.common.coords import radec_to_unit_vector
 from fsglib.ephemeris.types import CatalogStar, ReferenceStar
@@ -115,6 +112,15 @@ def _catalog_star_astrometry(
 
     enable_proper_motion = bool(eph_cfg.get("enable_proper_motion", False))
     if enable_proper_motion and _has_motion_terms(star):
+        try:
+            from astropy import units as astropy_units
+            from astropy.coordinates import Distance, SkyCoord
+            from astropy.time import Time
+        except ImportError as exc:
+            raise ImportError(
+                "Astropy is required for ephemeris.enable_proper_motion but is not "
+                "installed. Install it with: pip install astropy"
+            ) from exc
         kwargs = {
             "ra": original_ra * astropy_units.deg,
             "dec": original_dec * astropy_units.deg,
