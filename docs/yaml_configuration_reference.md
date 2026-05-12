@@ -461,9 +461,12 @@ reprojection is tracked as follow-up work.
 
 `run_sequence_tracking()` uses explicit mode names:
 `init_known_field`, `tracking`, `local_reacquire`, `lost_in_space`, and
-`safe_lost`. In PR5, `lost_in_space` is an auditable placeholder that returns an
-invalid frame with reason `lost_in_space_not_implemented`; the all-sky matcher
-is implemented by later PRs.
+`safe_lost`. In PR8, `lost_in_space` invokes the all-sky
+`LostInSpaceMatcher` when the runtime models mapping includes
+`models["lis_index"]`. If the index is absent, the frame fails cleanly with
+reason `lost_in_space_index_missing` and the state machine applies
+`tracking.safe_lost_after_lis_failures`. YAML-based LIS index-path loading is
+deferred to the configuration audit tracked in #69.
 
 | Key | Type | Default | Status | Description |
 |-----|------|---------|--------|-------------|
@@ -471,10 +474,10 @@ is implemented by later PRs.
 | `tracking.max_miss_count` | int | `3` | active | Track states remain active until their miss count exceeds this value. |
 | `tracking.tracking_match_algorithm` | string | `predicted_position` | active | Matcher policy used while in `tracking`. If absent, runtime falls back to `match.algorithm`. |
 | `tracking.local_reacquire_match_algorithm` | string | `predicted_position_with_pyramid_reacquire` | active | Matcher policy used in `local_reacquire`; this invokes predicted-position matching first, then PR4 local-pyramid reacquire on failure. |
-| `tracking.lost_in_space_match_algorithm` | string | `lost_in_space` | placeholder | Audit label for the PR5 `lost_in_space` placeholder. |
+| `tracking.lost_in_space_match_algorithm` | string | `lost_in_space` | active | Matcher policy label used in `lost_in_space`; PR8 routes this mode to `LostInSpaceMatcher` with runtime `models["lis_index"]`. |
 | `tracking.reacquire_after_tracking_failures` | int | `2` | active | Number of consecutive `tracking` failures before transitioning to `local_reacquire`. |
 | `tracking.lost_in_space_after_reacquire_failures` | int | `3` | active | Number of consecutive `local_reacquire` failures before transitioning to `lost_in_space`. |
-| `tracking.safe_lost_after_lis_failures` | int | `1` | active | Number of consecutive `lost_in_space` placeholder failures before transitioning to `safe_lost`. |
+| `tracking.safe_lost_after_lis_failures` | int | `1` | active | Number of consecutive `lost_in_space` failures before transitioning to `safe_lost`. |
 | `tracking.reacquire_after_failures` | int | `2` | active compatibility alias | Legacy alias for `tracking.reacquire_after_tracking_failures`. |
 | `tracking.lost_after_init_failures` | int | `3` | active compatibility alias | Legacy init-failure threshold and alias for the local-reacquire lost-in-space threshold when the new key is absent. |
 | `tracking.max_attitude_jump_arcsec` | float | `300.0` | active | Rejects tracking hypotheses with an attitude jump larger than this. |

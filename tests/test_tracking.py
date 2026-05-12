@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from fsglib.attitude.solver import quat_to_dcm
 from fsglib.common.types import (
     AttitudeSolution,
     FrameResult,
@@ -19,6 +20,7 @@ from fsglib.common.types import (
     TrackState,
 )
 from fsglib.ephemeris.types import ReferenceStar
+from fsglib.match.lost_in_space import build_lis_index_from_arrays
 from fsglib.match.pyramid import LocalPyramidCache
 from fsglib.pipeline.evaluate import evaluate_dataset
 from fsglib.pipeline.run_tracking import (
@@ -64,6 +66,86 @@ def _dummy_frame_result(valid: bool, requested_mode: str, matched: int, rms: flo
         evaluation=evaluation,
         meta={"requested_mode": requested_mode, "timings_s": {"total": runtime_s}},
     )
+
+
+def _tracking_test_quat(seed: int = 17) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    q = rng.normal(size=4)
+    if q[0] < 0:
+        q = -q
+    return q / np.linalg.norm(q)
+
+
+def _tracking_lis_vectors() -> np.ndarray:
+    raw = np.asarray(
+        [
+            [1.0, 0.1, 0.2],
+            [0.2, 1.0, 0.3],
+            [0.1, 0.3, 1.0],
+            [-0.9, 0.3, 0.2],
+            [0.4, -0.8, 0.3],
+            [0.3, 0.2, -0.9],
+            [-0.5, -0.6, 0.4],
+            [0.6, -0.2, -0.7],
+        ],
+        dtype=np.float64,
+    )
+    return raw / np.linalg.norm(raw, axis=1)[:, None]
+
+
+def _tracking_lis_index():
+    return build_lis_index_from_arrays(
+        catalog_ids=np.arange(500, 508, dtype=np.int64),
+        vectors=_tracking_lis_vectors(),
+        magnitudes=np.linspace(9.0, 12.5, 8),
+        config_snapshot={"epoch": 2026.0, "bandpass": "synthetic", "filters": {}},
+    )
+
+
+def _tracking_observed_from_lis_index(index, catalog_positions: list[int], q_ib: np.ndarray) -> list[ObservedStar]:
+    c_ib = quat_to_dcm(q_ib)
+    observed = []
+    for obs_pos, catalog_pos in enumerate(catalog_positions):
+        observed.append(
+            ObservedStar(
+                detector_id=0,
+                source_id=1000 + obs_pos,
+                x=float("nan"),
+                y=float("nan"),
+                los_body=c_ib @ index.catalog_vectors[catalog_pos],
+                flux=1000.0 - obs_pos,
+                snr=50.0 - obs_pos,
+            )
+        )
+    return observed
+
+
+def _tracking_lis_cfg() -> dict:
+    return {
+        "layout": {"default_detector_id": 0},
+        "match": {
+            "algorithm": "predicted_position",
+            "validate_min_support": 4,
+            "lost_in_space": {
+                "max_observed_stars": 20,
+                "pair_angle_tolerance_arcsec": 1.0,
+                "seed_residual_gate_arcsec": 1.0,
+                "expand_residual_gate_arcsec": 1.0,
+                "max_seed_candidates": 200,
+                "ambiguity_ratio": 0.98,
+            },
+        },
+        "attitude": {
+            "min_stars_mathematical": 3,
+            "min_stars_operational": 4,
+            "outlier_reject_enable": False,
+            "outlier_max_residual_arcsec": 5.0,
+        },
+        "tracking": {
+            "lost_in_space_match_algorithm": "lost_in_space",
+            "max_attitude_jump_arcsec": 100.0,
+        },
+    }
 
 
 def test_update_track_table_updates_matches_and_misses():
@@ -146,7 +228,7 @@ def test_update_state_machine_uses_explicit_modes_and_audit_fields():
 
     bad_lis = _dummy_frame_result(valid=False, requested_mode="lost_in_space", matched=0, rms=np.inf, runtime_s=0.1)
     state = SolveStateMachine(mode="lost_in_space")
-    state = update_state_machine(state, "lost_in_space", bad_lis, cfg, "lost_in_space_not_implemented")
+    state = update_state_machine(state, "lost_in_space", bad_lis, cfg, "lost_in_space_failed")
     assert state.mode == "safe_lost"
     assert state.transition_reason == "safe_lost_after_lis_failures"
     assert state.safe_lost_count == 1
@@ -219,7 +301,7 @@ def test_build_local_reacquire_frame_forces_reacquire_policy(monkeypatch):
     assert frame.meta["requested_match_algorithm"] == "predicted_position_with_pyramid_reacquire"
 
 
-def test_build_lost_in_space_frame_returns_not_implemented_failure(monkeypatch):
+def test_build_lost_in_space_frame_reports_missing_lis_index(monkeypatch):
     raw = RawFrame(detector_id=0, image=np.ones((3, 3)), time_s=12.0)
     pre = PreprocessedFrame(
         detector_id=0,
@@ -258,12 +340,59 @@ def test_build_lost_in_space_frame_returns_not_implemented_failure(monkeypatch):
 
     assert not frame.solution.valid
     assert frame.solution.mode == "lost_in_space"
-    assert frame.solution.quality["reason"] == "lost_in_space_not_implemented"
+    assert frame.solution.quality["reason"] == "lost_in_space_index_missing"
     assert frame.matching.mode == "lost_in_space"
-    assert frame.matching.debug["selected_strategy"] == "lost_in_space_not_implemented"
+    assert frame.matching.debug["selected_strategy"] == "lost_in_space_index_missing"
+    assert frame.matching.debug["lost_in_space"]["failure_reason"] == "lost_in_space_index_missing"
+    assert frame.matching.unmatched_observed_ids == [1]
     assert frame.meta["requested_mode"] == "lost_in_space"
     assert frame.meta["requested_match_algorithm"] == "lost_in_space"
-    assert frame.meta["validation_reason"] == "lost_in_space_not_implemented"
+    assert frame.meta["validation_reason"] == "lost_in_space_index_missing"
+
+
+def test_build_lost_in_space_frame_uses_lis_index_and_solves_attitude(monkeypatch):
+    raw = RawFrame(detector_id=0, image=np.ones((3, 3)), time_s=12.0)
+    pre = PreprocessedFrame(
+        detector_id=0,
+        image=np.ones((3, 3)),
+        background=0.0,
+        noise_map=np.ones((3, 3)),
+        valid_mask=np.ones((3, 3), dtype=bool),
+    )
+    index = _tracking_lis_index()
+    observed = _tracking_observed_from_lis_index(index, [0, 2, 3, 5, 6], _tracking_test_quat())
+
+    monkeypatch.setattr("fsglib.pipeline.run_tracking.load_npz_frame", lambda *_args, **_kwargs: raw)
+    monkeypatch.setattr("fsglib.pipeline.run_tracking.preprocess_frame", lambda *_args, **_kwargs: pre)
+    monkeypatch.setattr("fsglib.pipeline.run_tracking.extract_stars", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr("fsglib.pipeline.run_tracking.candidates_to_observed", lambda *_args, **_kwargs: observed)
+    monkeypatch.setattr("fsglib.pipeline.run_tracking.evaluate_frame_result", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "fsglib.pipeline.run_tracking.predict_catalog_positions",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("LIS must not build local references")),
+    )
+
+    frame = _build_lost_in_space_frame(
+        npz_path="frame.npz",
+        cfg=_tracking_lis_cfg(),
+        models={"projector": object(), "lis_index": index},
+        dataset_ctx=SimpleNamespace(batch_root="batch0"),
+    )
+
+    assert frame.solution.valid
+    assert frame.solution.mode == "lost_in_space"
+    assert frame.matching.success
+    assert frame.matching.mode == "lost_in_space"
+    assert frame.reference == []
+    assert frame.meta["num_reference_stars"] == 0
+    assert frame.meta["requested_mode"] == "lost_in_space"
+    assert frame.meta["requested_match_algorithm"] == "lost_in_space"
+    assert frame.meta["selected_match_strategy"] == "lost_in_space"
+    assert frame.meta["validation_reason"] == "ok"
+    assert frame.meta["tracking_validation"]["attitude_delta_arcsec"] is None
+    assert "ephemeris" not in frame.meta["timings_s"]
+    assert frame.matching.debug["lost_in_space"]["used_prior_attitude"] is False
+    assert frame.matching.debug["lost_in_space"]["used_predicted_pixels"] is False
 
 
 def test_run_sequence_tracking_dispatches_explicit_modes_without_init_fallback(tmp_path, monkeypatch):
@@ -295,7 +424,7 @@ def test_run_sequence_tracking_dispatches_explicit_modes_without_init_fallback(t
     def fake_lis(**_kwargs):
         calls.append("lost_in_space")
         frame = _dummy_frame_result(valid=False, requested_mode="lost_in_space", matched=0, rms=999.0, runtime_s=0.1)
-        frame.meta["validation_reason"] = "lost_in_space_not_implemented"
+        frame.meta["validation_reason"] = "lost_in_space_index_missing"
         return frame
 
     monkeypatch.setattr("fsglib.pipeline.run_tracking.run_single_frame_init", fake_init)
@@ -320,6 +449,93 @@ def test_run_sequence_tracking_dispatches_explicit_modes_without_init_fallback(t
     assert calls == ["init_known_field", "tracking", "local_reacquire", "lost_in_space"]
     assert result.mode_history == ["init_known_field", "tracking", "local_reacquire", "lost_in_space"]
     assert [state.mode for state in result.state_history] == ["tracking", "local_reacquire", "lost_in_space", "safe_lost"]
+
+
+def test_run_sequence_tracking_recovers_from_lost_in_space_success(tmp_path, monkeypatch):
+    dataset_ctx = SimpleNamespace(
+        batch_root=tmp_path,
+        batch_center_ra_deg=None,
+        batch_center_dec_deg=None,
+        field_offset_x_pix=None,
+        field_offset_y_pix=None,
+    )
+    raw = RawFrame(detector_id=0, image=np.ones((3, 3)), time_s=30.0)
+    pre = PreprocessedFrame(
+        detector_id=0,
+        image=np.ones((3, 3)),
+        background=0.0,
+        noise_map=np.ones((3, 3)),
+        valid_mask=np.ones((3, 3), dtype=bool),
+    )
+    index = _tracking_lis_index()
+    recovered_q = _tracking_test_quat(seed=23)
+    observed = _tracking_observed_from_lis_index(index, [0, 2, 3, 5, 6], recovered_q)
+    expected_lis_catalog_ids = {500, 502, 503, 505, 506}
+    calls = []
+    tracking_calls = []
+
+    def fake_init(*_args, **_kwargs):
+        calls.append("init_known_field")
+        return _dummy_frame_result(valid=True, requested_mode="init_known_field", matched=5, rms=1.0, runtime_s=0.1)
+
+    def fake_tracking(**kwargs):
+        calls.append("tracking")
+        tracking_calls.append(kwargs)
+        if len(tracking_calls) == 1:
+            frame = _dummy_frame_result(valid=False, requested_mode="tracking", matched=1, rms=100.0, runtime_s=0.1)
+            frame.meta["validation_reason"] = "tracking_failed"
+            return frame
+
+        assert kwargs["prior_q"] is not None
+        assert set(kwargs["track_states"]) == expected_lis_catalog_ids
+        frame = _dummy_frame_result(valid=True, requested_mode="tracking", matched=5, rms=1.0, runtime_s=0.1)
+        frame.meta["validation_reason"] = "tracking_success"
+        return frame
+
+    def fake_reacquire(**_kwargs):
+        calls.append("local_reacquire")
+        frame = _dummy_frame_result(valid=False, requested_mode="local_reacquire", matched=1, rms=100.0, runtime_s=0.1)
+        frame.meta["validation_reason"] = "local_reacquire_failed"
+        return frame
+
+    monkeypatch.setattr("fsglib.pipeline.run_tracking.run_single_frame_init", fake_init)
+    monkeypatch.setattr("fsglib.pipeline.run_tracking._build_tracking_frame", fake_tracking)
+    monkeypatch.setattr("fsglib.pipeline.run_tracking._build_local_reacquire_frame", fake_reacquire)
+    monkeypatch.setattr("fsglib.pipeline.run_tracking.load_npz_frame", lambda *_args, **_kwargs: raw)
+    monkeypatch.setattr("fsglib.pipeline.run_tracking.preprocess_frame", lambda *_args, **_kwargs: pre)
+    monkeypatch.setattr("fsglib.pipeline.run_tracking.extract_stars", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr("fsglib.pipeline.run_tracking.candidates_to_observed", lambda *_args, **_kwargs: observed)
+    monkeypatch.setattr("fsglib.pipeline.run_tracking.evaluate_frame_result", lambda *_args, **_kwargs: None)
+
+    cfg = _tracking_lis_cfg()
+    cfg["tracking"].update(
+        {
+            "max_miss_count": 3,
+            "reacquire_after_tracking_failures": 1,
+            "lost_in_space_after_reacquire_failures": 1,
+            "safe_lost_after_lis_failures": 1,
+        }
+    )
+    result = run_sequence_tracking(
+        ["f0.npz", "f1.npz", "f2.npz", "f3.npz", "f4.npz"],
+        cfg=cfg,
+        models={"projector": object(), "lis_index": index},
+        dataset_ctx=dataset_ctx,
+    )
+
+    assert calls == ["init_known_field", "tracking", "local_reacquire", "tracking"]
+    assert result.mode_history == ["init_known_field", "tracking", "local_reacquire", "lost_in_space", "tracking"]
+    assert [state.mode for state in result.state_history] == [
+        "tracking",
+        "local_reacquire",
+        "lost_in_space",
+        "tracking",
+        "tracking",
+    ]
+    assert result.state_history[3].transition_reason == "lost_in_space_success"
+    assert result.frame_results[3].solution.valid
+    assert {state.catalog_id for state in result.track_states} == expected_lis_catalog_ids
+    assert np.allclose(tracking_calls[1]["prior_q"], result.frame_results[3].solution.q_ib)
 
 
 def test_build_tracking_frame_uses_configured_matching_algorithm(monkeypatch):
