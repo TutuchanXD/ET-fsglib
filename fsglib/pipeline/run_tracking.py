@@ -21,6 +21,7 @@ from fsglib.common.types import (
 from fsglib.ephemeris.pipeline import build_reference_stars
 from fsglib.extract.pipeline import extract_stars
 from fsglib.match.cache import get_match_cache
+from fsglib.match.lost_in_space import LostInSpaceMatcher
 from fsglib.match.pipeline import match_stars, validate_match_hypothesis
 from fsglib.pipeline.convert import candidates_to_observed
 from fsglib.pipeline.evaluate import evaluate_frame_result, summarize_sequence_result
@@ -523,20 +524,156 @@ def _build_invalid_mode_frame(
     )
 
 
+def _invalid_attitude_solution(mode_value: str, reason: str, num_matched: int = 0) -> AttitudeSolution:
+    return AttitudeSolution(
+        q_ib=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64),
+        c_ib=np.eye(3, dtype=np.float64),
+        euler_zyx=None,
+        valid=False,
+        mode=mode_value,
+        num_matched=num_matched,
+        residual_rms_arcsec=np.inf,
+        residual_max_arcsec=np.inf,
+        quality={"reason": reason},
+        quality_flag="INVALID",
+        degraded_level="LOST",
+    )
+
+
+def _lost_in_space_unavailable_matching(
+    observed: list,
+    *,
+    mode_value: str,
+    match_algorithm: str,
+    reason: str,
+) -> MatchingResult:
+    return MatchingResult(
+        matched=[],
+        unmatched_observed_ids=[star.source_id for star in observed],
+        unmatched_catalog_ids=[],
+        mode=mode_value,
+        success=False,
+        score=0.0,
+        debug={
+            "algorithm": match_algorithm,
+            "selected_strategy": reason,
+            "rejection_reason": reason,
+            "lost_in_space": {
+                "failure_reason": reason,
+                "used_prior_attitude": False,
+                "used_predicted_pixels": False,
+                "num_observed_input": len(observed),
+            },
+        },
+    )
+
+
 def _build_lost_in_space_frame(
     npz_path: str,
     cfg: dict,
     models: dict,
     dataset_ctx: DatasetContext,
 ) -> FrameResult:
-    return _build_invalid_mode_frame(
-        npz_path,
-        cfg,
-        models,
-        dataset_ctx,
-        requested_mode=SolveMode.LOST_IN_SPACE,
-        match_algorithm=_lost_in_space_match_algorithm(cfg),
-        reason="lost_in_space_not_implemented",
+    mode_value = SolveMode.LOST_IN_SPACE.value
+    match_algorithm = _lost_in_space_match_algorithm(cfg)
+    effective_cfg = _cfg_with_match_algorithm(cfg, match_algorithm)
+    selected_algorithm = effective_cfg.get("match", {}).get("algorithm", match_algorithm)
+
+    timings: dict[str, float] = {}
+    total_start = perf_counter()
+
+    raw = load_npz_frame(npz_path, detector_id=int(effective_cfg["layout"].get("default_detector_id", 0)))
+
+    t0 = perf_counter()
+    pre = preprocess_frame(raw, calib=models.get("calib", {}), cfg=effective_cfg)
+    timings["preprocess"] = perf_counter() - t0
+
+    t0 = perf_counter()
+    cand = extract_stars(pre, cfg=effective_cfg)
+    timings["extract"] = perf_counter() - t0
+
+    t0 = perf_counter()
+    obs = candidates_to_observed(cand, models["projector"], effective_cfg)
+    timings["convert"] = perf_counter() - t0
+
+    t0 = perf_counter()
+    lis_index = models.get("lis_index")
+    if lis_index is None:
+        validation_reason = "lost_in_space_index_missing"
+        matching = _lost_in_space_unavailable_matching(
+            obs,
+            mode_value=mode_value,
+            match_algorithm=selected_algorithm,
+            reason=validation_reason,
+        )
+    else:
+        matching = LostInSpaceMatcher(lis_index, effective_cfg).match(obs)
+        matching.mode = mode_value
+        matching.debug.setdefault("algorithm", selected_algorithm)
+        if matching.success:
+            matching.debug.setdefault("selected_strategy", "lost_in_space")
+            validation_reason = "ok"
+        else:
+            validation_reason = (
+                matching.debug.get("lost_in_space", {}).get("failure_reason")
+                or "lost_in_space_failed"
+            )
+            matching.debug.setdefault("selected_strategy", validation_reason)
+            matching.debug.setdefault("rejection_reason", validation_reason)
+    timings["match"] = perf_counter() - t0
+
+    t0 = perf_counter()
+    if matching.success:
+        solve_input = AttitudeSolveInput(
+            time_s=raw.time_s,
+            matched_stars=matching.matched,
+            prior_q_ib=None,
+            mode=mode_value,
+            solver_cfg=effective_cfg["attitude"],
+        )
+        solution = solve_attitude(solve_input, effective_cfg)
+        hypothesis_ok, hypothesis_debug = validate_match_hypothesis(
+            matching,
+            solution,
+            effective_cfg,
+            attitude_delta_arcsec=None,
+        )
+        if not hypothesis_ok:
+            solution.valid = False
+            solution.quality_flag = "INVALID"
+            solution.quality["reason"] = hypothesis_debug.get("reason", "lost_in_space_failed")
+        solution.mode = mode_value
+        validation_reason = hypothesis_debug.get("reason", "ok" if solution.valid else "lost_in_space_failed")
+    else:
+        solution = _invalid_attitude_solution(mode_value, validation_reason, len(matching.matched))
+        hypothesis_debug = {"reason": validation_reason}
+    timings["attitude"] = perf_counter() - t0
+
+    t0 = perf_counter()
+    evaluation = evaluate_frame_result(raw, pre, cand, matching, solution, dataset_ctx, cfg=effective_cfg)
+    timings["evaluate"] = perf_counter() - t0
+    timings["total"] = perf_counter() - total_start
+
+    selected_strategy = matching.debug.get("selected_strategy", selected_algorithm)
+    return FrameResult(
+        raw=raw,
+        preprocessed=pre,
+        candidates=cand,
+        observed=obs,
+        reference=[],
+        matching=matching,
+        solution=solution,
+        evaluation=evaluation,
+        meta={
+            "dataset_batch_root": str(dataset_ctx.batch_root),
+            "num_reference_stars": 0,
+            "requested_mode": mode_value,
+            "requested_match_algorithm": selected_algorithm,
+            "selected_match_strategy": selected_strategy,
+            "validation_reason": validation_reason,
+            "timings_s": timings,
+            "tracking_validation": hypothesis_debug,
+        },
     )
 
 
@@ -634,7 +771,7 @@ def run_sequence_tracking(
                 models=models,
                 dataset_ctx=dataset_ctx,
             )
-            validation_reason = _validation_reason(frame_result, "lost_in_space_not_implemented")
+            validation_reason = _validation_reason(frame_result, "lost_in_space_failed")
         else:
             frame_result = _build_safe_lost_frame(
                 npz_path=npz_path,
