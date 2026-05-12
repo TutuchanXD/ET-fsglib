@@ -2,6 +2,9 @@ import numpy as np
 from fsglib.common.types import RawFrame, PreprocessedFrame
 
 
+_MIN_NOISE = 1.0e-6
+_ELECTRON_UNITS = {"e", "electron", "electrons"}
+
 _CALIBRATION_ORDER = [
     "finite_mask",
     "bias_subtraction",
@@ -95,11 +98,339 @@ def _require_bad_pixel_mask(calib: dict, image_shape: tuple[int, int]) -> np.nda
     return numeric.astype(bool)
 
 
+def _positive_float(value: object, name: str) -> float:
+    if value is None:
+        raise ValueError(f"preprocess.{name} must be configured")
+    result = float(value)
+    if not np.isfinite(result) or result <= 0.0:
+        raise ValueError(f"preprocess.{name} must be a positive finite value")
+    return result
+
+
+def _nonnegative_float(value: object, name: str, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    result = float(value)
+    if not np.isfinite(result) or result < 0.0:
+        raise ValueError(f"preprocess.{name} must be a non-negative finite value")
+    return result
+
+
+def _required_nonnegative_float(value: object, name: str) -> float:
+    if value is None:
+        raise ValueError(f"preprocess.{name} must be configured")
+    return _nonnegative_float(value, name)
+
+
+def _unit_is_electron(unit: str | None) -> bool:
+    if unit is None:
+        return False
+    return str(unit).strip().lower() in _ELECTRON_UNITS
+
+
+def _variance_unit(unit: str | None) -> str:
+    if unit is None:
+        return "image_unit^2"
+    return f"{unit}^2"
+
+
+def _robust_sigma(vals: np.ndarray) -> float:
+    finite = np.asarray(vals, dtype=np.float64)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return 0.0
+    median = float(np.median(finite))
+    mad = float(np.median(np.abs(finite - median)))
+    sigma = 1.4826 * mad
+    if sigma > 0.0 and np.isfinite(sigma):
+        return sigma
+    std = float(np.std(finite))
+    if std > 0.0 and np.isfinite(std):
+        return std
+    return 0.0
+
+
+def _sigma_clip_values(
+    vals: np.ndarray,
+    *,
+    sigma_clip_k: float,
+    max_iters: int,
+) -> tuple[np.ndarray, int]:
+    clipped = np.asarray(vals, dtype=np.float64)
+    clipped = clipped[np.isfinite(clipped)]
+    if clipped.size == 0:
+        return clipped, 0
+
+    original_count = clipped.size
+    for _ in range(max_iters):
+        if clipped.size == 0:
+            break
+        median = float(np.median(clipped))
+        sigma = _robust_sigma(clipped)
+        if sigma <= 0.0:
+            keep = np.isclose(clipped, median)
+        else:
+            keep = np.abs(clipped - median) <= sigma_clip_k * sigma
+        if np.all(keep):
+            break
+        clipped = clipped[keep]
+
+    return clipped, int(original_count - clipped.size)
+
+
+def _scalar_background(
+    image: np.ndarray,
+    valid_mask: np.ndarray,
+    cfg: dict,
+    method: str,
+) -> tuple[float, dict]:
+    preprocess_cfg = _preprocess_cfg(cfg)
+    vals = image[valid_mask]
+    if vals.size == 0:
+        return 0.0, {
+            "background_method_effective": method,
+            "background_rms": 0.0,
+            "background_num_clipped_pixels": 0,
+        }
+
+    if method == "median":
+        used = np.asarray(vals, dtype=np.float64)
+        num_clipped = 0
+    elif method == "sigma_clip_global":
+        used, num_clipped = _sigma_clip_values(
+            vals,
+            sigma_clip_k=float(preprocess_cfg.get("sigma_clip_k", 3.0)),
+            max_iters=int(preprocess_cfg.get("sigma_clip_max_iters", 3)),
+        )
+        if used.size == 0:
+            used = np.asarray(vals, dtype=np.float64)
+    else:
+        raise ValueError(f"Unsupported preprocess.background_method: {method}")
+
+    background = float(np.median(used))
+    rms = max(_robust_sigma(used - background), _MIN_NOISE)
+    return background, {
+        "background_method_effective": method,
+        "background_rms": rms,
+        "background_num_clipped_pixels": int(num_clipped),
+    }
+
+
+def _mesh_background(
+    image: np.ndarray,
+    valid_mask: np.ndarray,
+    cfg: dict,
+) -> tuple[np.ndarray, dict]:
+    preprocess_cfg = _preprocess_cfg(cfg)
+    mesh_size = int(preprocess_cfg.get("background_mesh_size", 64))
+    if mesh_size <= 0:
+        raise ValueError("preprocess.background_mesh_size must be a positive integer")
+
+    height, width = image.shape
+    background = np.zeros_like(image, dtype=np.float64)
+    rms_map = np.full_like(image, fill_value=_MIN_NOISE, dtype=np.float64)
+    fallback, fallback_meta = _scalar_background(
+        image,
+        valid_mask,
+        cfg,
+        "sigma_clip_global",
+    )
+    total_clipped = 0
+
+    for y0 in range(0, height, mesh_size):
+        y1 = min(y0 + mesh_size, height)
+        for x0 in range(0, width, mesh_size):
+            x1 = min(x0 + mesh_size, width)
+            block_valid = valid_mask[y0:y1, x0:x1]
+            block_vals = image[y0:y1, x0:x1][block_valid]
+            if block_vals.size == 0:
+                block_background = float(fallback)
+                block_rms = float(fallback_meta["background_rms"])
+            else:
+                used, num_clipped = _sigma_clip_values(
+                    block_vals,
+                    sigma_clip_k=float(preprocess_cfg.get("sigma_clip_k", 3.0)),
+                    max_iters=int(preprocess_cfg.get("sigma_clip_max_iters", 3)),
+                )
+                if used.size == 0:
+                    used = np.asarray(block_vals, dtype=np.float64)
+                block_background = float(np.median(used))
+                block_rms = max(_robust_sigma(used - block_background), _MIN_NOISE)
+                total_clipped += int(num_clipped)
+            background[y0:y1, x0:x1] = block_background
+            rms_map[y0:y1, x0:x1] = block_rms
+
+    return background, {
+        "background_method_effective": "mesh_median",
+        "background_rms": float(np.median(rms_map[valid_mask])) if np.any(valid_mask) else 0.0,
+        "background_rms_map": rms_map,
+        "background_mesh_size": mesh_size,
+        "background_num_clipped_pixels": int(total_clipped),
+    }
+
+
+def _estimate_background_model(
+    image: np.ndarray,
+    valid_mask: np.ndarray,
+    cfg: dict,
+) -> tuple[np.ndarray | float, dict]:
+    preprocess_cfg = _preprocess_cfg(cfg)
+    method = str(preprocess_cfg.get("background_method", "sigma_clip_global"))
+    if method in {"median", "sigma_clip_global"}:
+        return _scalar_background(image, valid_mask, cfg, method)
+    if method == "mesh_median":
+        return _mesh_background(image, valid_mask, cfg)
+    raise ValueError(f"Unsupported preprocess.background_method: {method}")
+
+
+def _empirical_noise_map(
+    image: np.ndarray,
+    valid_mask: np.ndarray,
+    cfg: dict,
+) -> tuple[np.ndarray, dict]:
+    preprocess_cfg = _preprocess_cfg(cfg)
+    background_method = str(preprocess_cfg.get("background_method", "sigma_clip_global"))
+    mesh_size = int(preprocess_cfg.get("background_mesh_size", 64))
+
+    if background_method == "mesh_median" and mesh_size > 0:
+        noise_map = np.full_like(image, fill_value=_MIN_NOISE, dtype=np.float64)
+        height, width = image.shape
+        for y0 in range(0, height, mesh_size):
+            y1 = min(y0 + mesh_size, height)
+            for x0 in range(0, width, mesh_size):
+                x1 = min(x0 + mesh_size, width)
+                block_vals = image[y0:y1, x0:x1][valid_mask[y0:y1, x0:x1]]
+                if block_vals.size == 0:
+                    sigma = _MIN_NOISE
+                else:
+                    used, _ = _sigma_clip_values(
+                        block_vals,
+                        sigma_clip_k=float(preprocess_cfg.get("sigma_clip_k", 3.0)),
+                        max_iters=int(preprocess_cfg.get("sigma_clip_max_iters", 3)),
+                    )
+                    sigma = max(_robust_sigma(used if used.size else block_vals), _MIN_NOISE)
+                noise_map[y0:y1, x0:x1] = sigma
+        return noise_map, {"empirical_noise_scope": "mesh"}
+
+    vals = image[valid_mask]
+    if vals.size == 0:
+        sigma = _MIN_NOISE
+    else:
+        used, _ = _sigma_clip_values(
+            vals,
+            sigma_clip_k=float(preprocess_cfg.get("sigma_clip_k", 3.0)),
+            max_iters=int(preprocess_cfg.get("sigma_clip_max_iters", 3)),
+        )
+        sigma = max(_robust_sigma(used if used.size else vals), _MIN_NOISE)
+    return np.full_like(image, fill_value=sigma, dtype=np.float64), {
+        "empirical_noise_scope": "global"
+    }
+
+
+def _poisson_read_noise_variance_map(
+    image_for_photon_noise: np.ndarray,
+    valid_mask: np.ndarray,
+    raw: RawFrame,
+    dark_current_map: np.ndarray | None,
+    cfg: dict,
+) -> tuple[np.ndarray, dict]:
+    preprocess_cfg = _preprocess_cfg(cfg)
+    if _unit_is_electron(raw.unit):
+        gain_e_per_output_unit = 1.0
+    else:
+        gain_e_per_output_unit = _positive_float(
+            preprocess_cfg.get("gain_e_per_dn"),
+            "gain_e_per_dn",
+        )
+    read_noise_e = _required_nonnegative_float(
+        preprocess_cfg.get("read_noise_e"),
+        "read_noise_e",
+    )
+    quantization_noise_e = _nonnegative_float(
+        preprocess_cfg.get("quantization_noise_e"),
+        "quantization_noise_e",
+        default=0.0,
+    )
+
+    signal_e = np.maximum(image_for_photon_noise, 0.0) * gain_e_per_output_unit
+    dark_current_source = "none"
+    dark_e = np.zeros_like(image_for_photon_noise, dtype=np.float64)
+    if dark_current_map is not None:
+        if raw.cadence_s is None:
+            raise ValueError(
+                "raw.cadence_s is required to propagate dark-current shot noise"
+            )
+        dark_e = np.maximum(dark_current_map, 0.0) * float(raw.cadence_s)
+        dark_e *= gain_e_per_output_unit
+        dark_current_source = "calib.dark"
+    elif preprocess_cfg.get("dark_current_e_per_s") is not None:
+        if raw.cadence_s is None:
+            raise ValueError(
+                "raw.cadence_s is required when preprocess.dark_current_e_per_s is configured"
+            )
+        dark_e.fill(
+            _nonnegative_float(
+                preprocess_cfg.get("dark_current_e_per_s"),
+                "dark_current_e_per_s",
+            )
+            * float(raw.cadence_s)
+        )
+        dark_current_source = "preprocess.dark_current_e_per_s"
+
+    variance_e2 = signal_e + dark_e + read_noise_e**2 + quantization_noise_e**2
+    variance = variance_e2 / (gain_e_per_output_unit**2)
+    variance = np.where(valid_mask, np.maximum(variance, _MIN_NOISE**2), _MIN_NOISE**2)
+    return variance, {
+        "gain_e_per_output_unit": float(gain_e_per_output_unit),
+        "read_noise_e": float(read_noise_e),
+        "quantization_noise_e": float(quantization_noise_e),
+        "dark_current_source": dark_current_source,
+        "flat_uncertainty_included": False,
+    }
+
+
+def _estimate_variance_and_noise(
+    image_sub: np.ndarray,
+    image_for_photon_noise: np.ndarray,
+    valid_mask: np.ndarray,
+    raw: RawFrame,
+    dark_current_map: np.ndarray | None,
+    cfg: dict,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    preprocess_cfg = _preprocess_cfg(cfg)
+    model = str(preprocess_cfg.get("variance_model", "empirical_robust"))
+
+    if model == "empirical_robust":
+        noise_map, details = _empirical_noise_map(image_sub, valid_mask, cfg)
+        variance_map = np.asarray(noise_map, dtype=np.float64) ** 2
+    elif model == "poisson_read_noise":
+        variance_map, details = _poisson_read_noise_variance_map(
+            image_for_photon_noise,
+            valid_mask,
+            raw,
+            dark_current_map,
+            cfg,
+        )
+        noise_map = np.sqrt(variance_map)
+    else:
+        raise ValueError(f"Unsupported preprocess.variance_model: {model}")
+
+    meta = {
+        "variance_model_configured": model,
+        "variance_model_effective": model,
+        "variance_unit": _variance_unit(raw.unit),
+        "noise_unit": raw.unit or "image_unit",
+        "variance_components": details,
+    }
+    return variance_map, noise_map, meta
+
+
 def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame:
     preprocess_cfg = _preprocess_cfg(cfg)
     image = np.asarray(raw.image, dtype=np.float64).copy()
     valid_mask = np.isfinite(image)
     image_shape = image.shape
+    dark_current_map = None
 
     image = np.where(valid_mask, image, 0.0)
     preprocess_meta = {
@@ -140,6 +471,7 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
             "enable_dark_subtraction",
             image_shape,
         )
+        dark_current_map = dark
         image = image - dark * float(raw.cadence_s)
         _record_calibration(
             calib,
@@ -232,17 +564,29 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
         )
 
     image = np.where(valid_mask, image, 0.0)
+    image_before_background = image.copy()
 
     if preprocess_cfg.get("enable_background_subtraction", True):
-        background = estimate_background(image, valid_mask, cfg)
+        background, background_meta = _estimate_background_model(image, valid_mask, cfg)
         image_sub = image - background
     else:
         background = 0.0
+        background_meta = {
+            "background_method_effective": "none",
+            "background_rms": 0.0,
+            "background_num_clipped_pixels": 0,
+        }
         image_sub = image
 
     image_sub = np.where(valid_mask, image_sub, 0.0)
-    noise_map = estimate_noise_map(image_sub, valid_mask, cfg)
-    variance_map = np.asarray(noise_map, dtype=np.float64) ** 2
+    variance_map, noise_map, variance_meta = _estimate_variance_and_noise(
+        image_sub,
+        image_before_background,
+        valid_mask,
+        raw,
+        dark_current_map,
+        cfg,
+    )
 
     preprocess_meta["num_finite_input_pixels"] = int(np.count_nonzero(np.isfinite(raw.image)))
     preprocess_meta["num_bad_pixels"] = bad_pixel_count
@@ -252,11 +596,16 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
         "background_method",
         "sigma_clip_global",
     )
-    background_method_effective = "median" if background_enabled else "none"
     preprocess_meta["background_subtraction_enabled"] = background_enabled
     preprocess_meta["background_method_configured"] = background_method_configured
-    preprocess_meta["background_method_effective"] = background_method_effective
-    preprocess_meta["background_method"] = background_method_effective
+    preprocess_meta["background_method_effective"] = background_meta[
+        "background_method_effective"
+    ]
+    preprocess_meta["background_method"] = background_meta["background_method_effective"]
+    for key, value in background_meta.items():
+        if key != "background_rms_map":
+            preprocess_meta[key] = value
+    preprocess_meta.update(variance_meta)
 
     return PreprocessedFrame(
         detector_id=raw.detector_id,
@@ -270,16 +619,10 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
 
 
 def estimate_background(image: np.ndarray, valid_mask: np.ndarray, cfg: dict):
-    vals = image[valid_mask]
-    if vals.size == 0:
-        return 0.0
-    median = np.median(vals)
-    return median
+    background, _ = _estimate_background_model(image, valid_mask, cfg)
+    return background
 
 
 def estimate_noise_map(image: np.ndarray, valid_mask: np.ndarray, cfg: dict):
-    vals = image[valid_mask]
-    if vals.size == 0:
-        return np.full_like(image, fill_value=1e-6, dtype=np.float64)
-    sigma = np.std(vals)
-    return np.full_like(image, fill_value=max(sigma, 1e-6), dtype=np.float64)
+    noise_map, _ = _empirical_noise_map(image, valid_mask, cfg)
+    return noise_map

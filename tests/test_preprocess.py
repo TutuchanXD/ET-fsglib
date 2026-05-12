@@ -186,8 +186,9 @@ def test_preprocess_records_configured_and_effective_background_method():
     pre = preprocess_frame(raw, calib={}, cfg=cfg)
 
     assert pre.preprocess_meta["background_method_configured"] == "sigma_clip_global"
-    assert pre.preprocess_meta["background_method_effective"] == "median"
-    assert pre.preprocess_meta["background_method"] == "median"
+    assert pre.preprocess_meta["background_method_effective"] == "sigma_clip_global"
+    assert pre.preprocess_meta["background_method"] == "sigma_clip_global"
+    assert "background_rms" in pre.preprocess_meta
 
 
 def test_preprocess_records_documented_default_background_method_when_absent():
@@ -202,7 +203,186 @@ def test_preprocess_records_documented_default_background_method_when_absent():
     pre = preprocess_frame(raw, calib={}, cfg=cfg)
 
     assert pre.preprocess_meta["background_method_configured"] == "sigma_clip_global"
-    assert pre.preprocess_meta["background_method_effective"] == "median"
+    assert pre.preprocess_meta["background_method_effective"] == "sigma_clip_global"
+
+
+def test_sigma_clip_global_background_rejects_bright_outlier():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[0.0, 0.0, 10.0], [10.0, 1000.0, 10.0]], dtype=np.float64),
+        time_s=0.0,
+    )
+    cfg = _preprocess_cfg(
+        enable_background_subtraction=True,
+        background_method="sigma_clip_global",
+        sigma_clip_k=3.0,
+    )
+
+    pre = preprocess_frame(raw, calib={}, cfg=cfg)
+
+    assert np.isclose(pre.background, 10.0)
+    assert pre.preprocess_meta["background_method_effective"] == "sigma_clip_global"
+    assert pre.preprocess_meta["background_num_clipped_pixels"] == 1
+
+
+def test_mesh_median_background_tracks_spatial_gradient():
+    yy, xx = np.indices((32, 32), dtype=np.float64)
+    image = 10.0 + 0.5 * xx
+    image[8, 8] += 500.0
+    image[24, 24] += 500.0
+    raw = RawFrame(detector_id=0, image=image, time_s=0.0)
+    cfg = _preprocess_cfg(
+        enable_background_subtraction=True,
+        background_method="mesh_median",
+        background_mesh_size=8,
+        sigma_clip_k=3.0,
+    )
+
+    pre = preprocess_frame(raw, calib={}, cfg=cfg)
+
+    assert isinstance(pre.background, np.ndarray)
+    assert pre.background.shape == image.shape
+    assert float(pre.background[16, 28] - pre.background[16, 4]) > 8.0
+    assert np.nanmedian(np.abs(pre.image[pre.valid_mask])) < 2.0
+    assert pre.preprocess_meta["background_method_effective"] == "mesh_median"
+    assert pre.preprocess_meta["background_mesh_size"] == 8
+
+
+def test_empirical_robust_noise_uses_outlier_resistant_variance():
+    image = np.array(
+        [
+            [0.0, 1.0, 2.0, 3.0],
+            [0.0, 1.0, 2.0, 3.0],
+            [0.0, 1.0, 2.0, 1000.0],
+            [0.0, 1.0, 2.0, 3.0],
+        ],
+        dtype=np.float64,
+    )
+    raw = RawFrame(detector_id=0, image=image, time_s=0.0)
+    cfg = _preprocess_cfg(
+        enable_background_subtraction=False,
+        variance_model="empirical_robust",
+    )
+
+    pre = preprocess_frame(raw, calib={}, cfg=cfg)
+
+    assert np.all(pre.noise_map < 5.0)
+    assert np.allclose(pre.variance_map, pre.noise_map**2)
+    assert pre.preprocess_meta["variance_model_effective"] == "empirical_robust"
+
+
+def test_poisson_read_noise_variance_model_converts_back_to_input_units():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[100.0, 200.0]], dtype=np.float64),
+        time_s=0.0,
+        unit="adu",
+    )
+    cfg = _preprocess_cfg(
+        enable_background_subtraction=False,
+        variance_model="poisson_read_noise",
+        gain_e_per_dn=2.0,
+        read_noise_e=4.0,
+        quantization_noise_e=1.0,
+    )
+
+    pre = preprocess_frame(raw, calib={}, cfg=cfg)
+
+    expected_variance = np.array([[54.25, 104.25]], dtype=np.float64)
+    assert np.allclose(pre.variance_map, expected_variance)
+    assert np.allclose(pre.noise_map, np.sqrt(expected_variance))
+    assert pre.preprocess_meta["variance_unit"] == "adu^2"
+    assert pre.preprocess_meta["variance_model_effective"] == "poisson_read_noise"
+
+
+def test_poisson_variance_model_adds_dark_shot_noise_from_cadence():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[100.0]], dtype=np.float64),
+        time_s=0.0,
+        cadence_s=2.0,
+        unit="adu",
+    )
+    calib = {"dark": np.array([[3.0]], dtype=np.float64)}
+    cfg = _preprocess_cfg(
+        enable_dark_subtraction=True,
+        enable_background_subtraction=False,
+        variance_model="poisson_read_noise",
+        gain_e_per_dn=2.0,
+        read_noise_e=4.0,
+        quantization_noise_e=0.0,
+    )
+
+    pre = preprocess_frame(raw, calib=calib, cfg=cfg)
+
+    assert np.allclose(pre.image, [[94.0]])
+    assert np.allclose(pre.variance_map, [[54.0]])
+    assert pre.preprocess_meta["variance_components"]["dark_current_source"] == "calib.dark"
+
+
+def test_poisson_variance_model_requires_gain_for_dn_inputs():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[100.0]], dtype=np.float64),
+        time_s=0.0,
+        unit="adu",
+    )
+    cfg = _preprocess_cfg(
+        enable_background_subtraction=False,
+        variance_model="poisson_read_noise",
+        read_noise_e=4.0,
+    )
+
+    with pytest.raises(ValueError, match="preprocess.gain_e_per_dn"):
+        preprocess_frame(raw, calib={}, cfg=cfg)
+
+
+def test_poisson_variance_model_allows_electron_inputs_without_gain():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[100.0]], dtype=np.float64),
+        time_s=0.0,
+        unit="electron",
+    )
+    cfg = _preprocess_cfg(
+        enable_background_subtraction=False,
+        variance_model="poisson_read_noise",
+        read_noise_e=4.0,
+    )
+
+    pre = preprocess_frame(raw, calib={}, cfg=cfg)
+
+    assert np.allclose(pre.variance_map, [[116.0]])
+    assert pre.preprocess_meta["variance_unit"] == "electron^2"
+
+
+def test_extract_snr_uses_preprocess_poisson_noise_map():
+    image = np.zeros((5, 5), dtype=np.float64)
+    image[2, 2] = 100.0
+    raw = RawFrame(detector_id=0, image=image, time_s=0.0, unit="adu")
+    cfg = {
+        **_preprocess_cfg(
+            enable_background_subtraction=False,
+            variance_model="poisson_read_noise",
+            gain_e_per_dn=2.0,
+            read_noise_e=0.0,
+        ),
+        "extract": {
+            "seed_threshold_sigma": 5.0,
+            "min_area": 1,
+            "max_area": 9,
+            "centroid_method": "weighted_centroid",
+            "bbox_expand": 0,
+            "reject_edge_margin": 0,
+            "bias_correction": {"enabled": False},
+        },
+    }
+
+    pre = preprocess_frame(raw, calib={}, cfg=cfg)
+    candidates = extract_stars(pre, cfg=cfg)
+
+    assert len(candidates) == 1
+    assert np.isclose(candidates[0].snr, 100.0 / np.sqrt(50.0))
 
 
 def test_load_calibration_products_from_yaml_paths(tmp_path):

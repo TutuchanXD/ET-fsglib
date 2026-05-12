@@ -228,7 +228,7 @@ Each `layout.detectors[]` entry supports:
 
 | Key | Type | Default | Status | Description |
 |-----|------|---------|--------|-------------|
-| `preprocess.enable_background_subtraction` | bool | `true` | active | If true, subtracts a scalar median background from finite pixels after detector calibration. |
+| `preprocess.enable_background_subtraction` | bool | `true` | active | If true, subtracts the configured background model from finite pixels after detector calibration. |
 | `preprocess.enable_bias_subtraction` | bool | `true` | active | If true, subtracts `preprocess.bias_frame_path` from the raw image before dark/FPN/flat correction. `base.yaml` points to a no-op 2049-pixel PR9 fake asset. |
 | `preprocess.bias_frame_path` | path string or null | local fake 2049 asset | active with bias subtraction | `.npy` or `.npz` 2-D finite numeric bias frame. Missing path raises an error when enabled. |
 | `preprocess.enable_dark_subtraction` | bool | `true` | active | If true, subtracts `preprocess.dark_current_path * raw.cadence_s`. Missing `raw.cadence_s` raises an error. |
@@ -239,15 +239,28 @@ Each `layout.detectors[]` entry supports:
 | `preprocess.bad_pixel_mask_path` | path string or null | local fake 2049 asset | active with bad-pixel mask | `.npy` or `.npz` 2-D bool or numeric 0/1 mask matching the raw image shape. |
 | `preprocess.enable_fpn_subtraction` | bool | `true` | active | If true, subtracts an additive fixed-pattern residual map before flat-field correction. `base.yaml` points to a no-op 2049-pixel PR9 fake asset. |
 | `preprocess.fpn_residual_map_path` | path string or null | local fake 2049 asset | active with FPN subtraction | `.npy` or `.npz` 2-D finite numeric residual map matching the raw image shape. |
-| `preprocess.background_method` | string | `sigma_clip_global` | declared | Current implementation always uses a simple median. |
-| `preprocess.sigma_clip_k` | float | `3.0` | reserved | Sigma clipping is not implemented in the current background estimator. |
+| `preprocess.background_method` | string | `sigma_clip_global` | active | Supported values: `median`, `sigma_clip_global`, and `mesh_median`. `mesh_median` writes a 2-D background map. |
+| `preprocess.sigma_clip_k` | float | `3.0` | active | Rejection threshold for sigma-clipped global and mesh background/noise estimates. |
+| `preprocess.sigma_clip_max_iters` | int | `3` | active | Maximum robust sigma-clipping iterations for background/noise estimation. |
+| `preprocess.background_mesh_size` | int | `64` | active with `mesh_median` | Mesh cell size in pixels for local median background and empirical local RMS estimates. |
+| `preprocess.variance_model` | string | `empirical_robust` | active | Supported values: `empirical_robust` and `poisson_read_noise`. `noise_map` is always `sqrt(variance_map)`. |
+| `preprocess.gain_e_per_dn` | float or null | `null` | active with `poisson_read_noise` | Electrons per DN/ADU for non-electron inputs. Required when `variance_model=poisson_read_noise` and the raw unit is not an electron unit. |
+| `preprocess.read_noise_e` | float or null | `null` | active with `poisson_read_noise` | Read noise in electrons. Required, and may be zero for analytic/noiseless fixtures. |
+| `preprocess.quantization_noise_e` | float | `0.0` | active with `poisson_read_noise` | Optional quantization noise term in electrons. |
+| `preprocess.dark_current_e_per_s` | float or null | `null` | active with `poisson_read_noise` | Optional scalar dark-current shot-noise source in electrons per second when no loaded dark-current map is available. If a dark-current calibration map is loaded, that map and `raw.cadence_s` are used. |
 | `preprocess.denoise_method` | string | `none` | reserved | Denoising is not implemented. |
 
-The current noise map is a constant image filled with the standard deviation of
-the calibrated, background-subtracted valid pixels, floored at `1e-6`.
-`PreprocessedFrame.variance_map` is populated as `noise_map**2` for PR9
-compatibility; the physical Poisson/read-noise variance model is deferred to
-PR10. Calibration asset paths are loaded by `build_models(cfg)` into
+The default `empirical_robust` variance model estimates RMS with a MAD-based
+robust sigma after the configured background subtraction; `mesh_median`
+produces spatially varying background and noise maps. `poisson_read_noise`
+computes variance from photon counts, loaded dark-current maps scaled by
+`raw.cadence_s` when present, read noise, and quantization noise. For DN/ADU
+inputs the calculation uses `preprocess.gain_e_per_dn` internally and converts
+`variance_map` back to the output image unit squared; `PreprocessedFrame.image`,
+`background`, and `noise_map` remain in the input image unit. Flat-response
+scaling is applied through the calibrated image, but flat-field uncertainty is
+not included yet and is reported in metadata as disabled. Calibration asset paths
+are loaded by `build_models(cfg)` into
 `models["calib"]`; enabled products with missing paths, missing files, wrong
 rank, or shape mismatches raise explicit errors. `.npz` assets must either use
 the `data` array key or contain exactly one array. Local calibration products
@@ -661,8 +674,6 @@ The following keys are present in YAML but currently do not change runtime
 behavior:
 
 - `io.*`
-- `preprocess.background_method`
-- `preprocess.sigma_clip_k`
 - `preprocess.denoise_method`
 - `extract.detection_image`
 - `extract.bias_correction.auto_resolve_psf_model`
