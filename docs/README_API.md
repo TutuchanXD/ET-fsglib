@@ -197,7 +197,8 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 `StarCandidate`
 
 - 星点提取的直接输出；
-- `flags` 里写入质心窗口、peak 像素、bias correction ；
+- `shape` 里写入由候选像素直接测得的二阶矩形态指标；
+- `flags` 里写入 hysteresis 阈值、质心窗口、peak 像素、shape summary、bias correction；
 
 ### 5.2 观测星与匹配星
 
@@ -306,11 +307,25 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 配置入口：
 
 - `extract.seed_threshold_sigma`
+- `extract.grow_threshold_sigma`
 - `extract.min_area / max_area`
+- `extract.max_ellipticity`
 - `extract.centroid_method`
 - `extract.centroid_window.size`
 - `extract.reject_edge_margin`
 - `extract.bias_correction.*`
+
+行为：
+
+- segmentation 在 SNR 图上使用 seed/grow hysteresis，两个阈值都使用严格 `>` 比较；
+- grow region 使用 8-connected 连通性，且必须连接到至少一个 seed pixel；
+- 多个 seed 落入同一个 grown component 时返回一个 candidate，近邻拆分留给 PR13；
+- `weighted_centroid`、`flux`、`area`、candidate `snr` 和 segment bbox 基于 grown segment；
+- `grow_threshold_sigma = seed_threshold_sigma` 可复现 seed-only segmentation；
+- shape 由算法从 candidate pixels 自行计算，不依赖外部 PSF；外部 PSF/ML centroid 留给 PR13；
+- `ellipticity = 1 - sqrt(lambda_min / lambda_max)`，超过 `extract.max_ellipticity` 的候选会被拒绝；
+- `fwhm_pix` 是 major-axis 二阶矩代理量，`sharpness` 是 peak / grown-segment 平均面亮度；
+- 单像素或退化二阶矩候选保留并标记 `shape_degenerate=true`，artifact 策略留给 PR11。
 
 其他：
 
