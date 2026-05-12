@@ -29,7 +29,7 @@ class ReferenceStar:
 
 @dataclass
 class EphemerisContext:
-    mode: str                     # init | tracking
+    mode: str
     time_s: float
     prior_attitude_q: np.ndarray | None
     boresight_inertial: np.ndarray | None

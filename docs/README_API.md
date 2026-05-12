@@ -163,7 +163,7 @@ __Version：1.0.0__
 适用场景：
 
 - 通用序列跟踪；
-- 首帧走 init；
+- 首帧走 `init_known_field`，之后按显式状态机在 `tracking`、`local_reacquire`、`lost_in_space`、`safe_lost` 间转移；
 - 使用 `models` 提供投影和星表访问。
 
 返回值：
@@ -175,6 +175,9 @@ __Version：1.0.0__
 - `mode_history`
 - `state_history`
 - `metrics`
+
+PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
+`lost_in_space_not_implemented`，不会静默回退到 init；真实全天区匹配由后续 PR 接入。
 
 ## 5. 数据结构
 

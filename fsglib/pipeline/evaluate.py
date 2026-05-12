@@ -247,6 +247,8 @@ def summarize_sequence_result(sequence_result) -> dict:
             "init_success_rate": 0.0,
             "tracking_keep_rate": 0.0,
             "reacquire_count": 0,
+            "lost_count": 0,
+            "safe_lost_count": 0,
             "mean_num_matched": 0.0,
             "mean_rms_arcsec": np.inf,
             "p95_rms_arcsec": np.inf,
@@ -262,7 +264,11 @@ def summarize_sequence_result(sequence_result) -> dict:
             "mean_stage_runtime_s": {},
         }
 
-    init_frames = [frame for frame in frame_results if frame.meta.get("requested_mode", frame.solution.mode) == "init"]
+    init_frames = [
+        frame
+        for frame in frame_results
+        if frame.meta.get("requested_mode", frame.solution.mode) in {"init", "init_known_field"}
+    ]
     tracking_frames = [frame for frame in frame_results if frame.meta.get("requested_mode", frame.solution.mode) == "tracking"]
     valid_frames = [frame for frame in frame_results if frame.solution.valid]
     rms_values = np.array([frame.solution.residual_rms_arcsec for frame in frame_results], dtype=np.float64)
@@ -300,6 +306,27 @@ def summarize_sequence_result(sequence_result) -> dict:
         if values.size:
             mean_stage_runtime_s[stage] = float(np.mean(values))
 
+    reacquire_reason_count = sum(
+        state.transition_reason in {"reacquire_init", "local_reacquire_after_tracking_failures"}
+        for state in sequence_result.state_history
+    )
+    lost_reason_count = sum(
+        state.transition_reason in {"lost_after_init_failures", "lost_in_space_after_init_failures", "lost_in_space_after_reacquire_failures"}
+        for state in sequence_result.state_history
+    )
+    reacquire_count = max(
+        [reacquire_reason_count, *(int(state.reacquire_count) for state in sequence_result.state_history)],
+        default=0,
+    )
+    lost_count = max(
+        [lost_reason_count, *(int(state.lost_count) for state in sequence_result.state_history)],
+        default=0,
+    )
+    safe_lost_count = max(
+        [*(int(getattr(state, "safe_lost_count", 0)) for state in sequence_result.state_history)],
+        default=0,
+    )
+
     return {
         "num_frames": len(frame_results),
         "init_success_rate": (
@@ -308,7 +335,9 @@ def summarize_sequence_result(sequence_result) -> dict:
         "tracking_keep_rate": (
             sum(frame.solution.valid for frame in tracking_frames) / len(tracking_frames) if tracking_frames else 0.0
         ),
-        "reacquire_count": int(sum(state.transition_reason == "reacquire_init" for state in sequence_result.state_history)),
+        "reacquire_count": int(reacquire_count),
+        "lost_count": int(lost_count),
+        "safe_lost_count": int(safe_lost_count),
         "mean_num_matched": float(np.mean(matched_values)) if matched_values.size else 0.0,
         "mean_rms_arcsec": float(np.mean(rms_values)) if rms_values.size else np.inf,
         "p95_rms_arcsec": float(np.percentile(rms_values, 95)) if rms_values.size else np.inf,
