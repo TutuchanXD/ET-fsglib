@@ -40,6 +40,13 @@ preprocess:
   enable_background_subtraction: true
   background_method: sigma_clip_global
   sigma_clip_k: 3.0
+  sigma_clip_max_iters: 3
+  background_mesh_size: 64
+  variance_model: empirical_robust
+  gain_e_per_dn: null
+  read_noise_e: null
+  quantization_noise_e: 0.0
+  dark_current_e_per_s: null
   denoise_method: none
 
 extract:

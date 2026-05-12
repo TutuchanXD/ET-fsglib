@@ -284,9 +284,12 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 
 实现：
 
-- 有限值掩膜、bias/dark/FPN/flat/bad-pixel 校准链、全局背景估计和全局噪声估计；
+- 有限值掩膜、bias/dark/FPN/flat/bad-pixel 校准链、robust 背景估计和噪声方差估计；
 - `calib` 由 `build_models(cfg)` 根据 `preprocess.*_path` YAML 配置加载；
-- `PreprocessedFrame.preprocess_meta` 记录校准项是否启用、是否应用、资产路径、形状和无效像素计数。
+- `preprocess.background_method` 支持 `median`、`sigma_clip_global` 和 `mesh_median`；`mesh_median` 会输出二维背景图；
+- `preprocess.variance_model` 支持默认 `empirical_robust` 和显式 `poisson_read_noise`，后者使用 gain、read noise、quantization noise 与 cadence-scaled dark current 推导物理方差；
+- `PreprocessedFrame.noise_map` 始终等于 `sqrt(variance_map)`，并保持与 `PreprocessedFrame.image` 相同的图像单位；
+- `PreprocessedFrame.preprocess_meta` 记录校准项是否启用、是否应用、资产路径、形状、无效像素计数、背景 RMS、方差模型和单位转换。
 
 ### 6.3 星点提取
 
