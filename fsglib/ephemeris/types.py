@@ -12,6 +12,7 @@ class CatalogStar:
     rv_km_s: float | None
     mag_g: float | None
     color_bp_rp: float | None
+    ref_epoch: float | None = None
     meta: dict = field(default_factory=dict)
 
 @dataclass

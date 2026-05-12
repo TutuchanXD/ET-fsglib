@@ -751,8 +751,8 @@ def _build_seed_debug(
     }
 
 
-def _hypothesis_mapping_key(matched: list[MatchedStar]) -> tuple[tuple[int, int], ...]:
-    return tuple((int(match.source_id), int(match.catalog_id)) for match in matched)
+def _hypothesis_mapping_key(matched: list[MatchedStar]) -> tuple[tuple[Any, Any], ...]:
+    return tuple((match.source_id, match.catalog_id) for match in matched)
 
 
 def _mean_assignment_cost(matched: list[MatchedStar]) -> float:

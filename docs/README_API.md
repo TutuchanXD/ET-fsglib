@@ -332,7 +332,10 @@ __Version：1.0.0__
 
 - `init` 模式下按 boresight 查询区域星表；
 - `tracking` 模式下查询跟踪目标；
-- 再调用 `projector.project_to_detectors()` 生成 `predicted_xy`。
+- 根据 `ephemeris.target_epoch` 对 generic Gaia 星表做 proper-motion epoch propagation；
+- 再调用 `projector.project_to_detectors()` 生成 `predicted_xy`；
+- `ReferenceStar.meta` 记录原始/传播后坐标、epoch 和 weight provenance；
+- `weight_hint` 由 Kepler/ET bandpass magnitude 的 flux proxy 派生，缺失时 fallback 到 Gaia G。
 
  `projector` 的要求：
 

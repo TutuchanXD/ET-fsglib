@@ -13,6 +13,7 @@ from fsglib.common.coords import radec_to_unit_vector
 from fsglib.common.io import load_npz_frame
 from fsglib.common.types import AttitudeSolveInput, MatchingContext, ObservedStar
 from fsglib.ephemeris.guide_geometry import build_exact_focalplane_geometry_adapter
+from fsglib.ephemeris.pipeline import reference_weight_from_magnitudes
 from fsglib.ephemeris.types import ReferenceStar
 from fsglib.extract.pipeline import extract_stars
 from fsglib.match.pipeline import match_stars
@@ -296,17 +297,32 @@ def _build_reference_stars(cfg: dict, registry, catalog, GaiaSourceFilter) -> tu
             "isolation_radius_pix": isolation_radius_pix,
         }
         for row in frame.itertuples(index=False):
+            mag_g = float(row.g_mean_mag)
+            weight_hint, weight_meta = reference_weight_from_magnitudes(
+                mag_g=mag_g,
+                mag_kp=None,
+            )
+            ra_deg = float(row.ra_deg)
+            dec_deg = float(row.dec_deg)
             reference.append(
                 ReferenceStar(
                     catalog_id=int(row.source_id),
                     time_s=0.0,
-                    los_inertial=radec_to_unit_vector(float(row.ra_deg), float(row.dec_deg)),
-                    mag_g=float(row.g_mean_mag),
+                    los_inertial=radec_to_unit_vector(ra_deg, dec_deg),
+                    mag_g=mag_g,
                     detector_ids_visible=[detector_id],
                     predicted_xy={detector_id: (float(row.xpix), float(row.ypix))},
                     predicted_valid={detector_id: True},
-                    weight_hint=1.0,
-                    meta={"ra_deg": float(row.ra_deg), "dec_deg": float(row.dec_deg)},
+                    weight_hint=weight_hint,
+                    meta={
+                        "ra_deg": ra_deg,
+                        "dec_deg": dec_deg,
+                        "propagated_ra_deg": ra_deg,
+                        "propagated_dec_deg": dec_deg,
+                        "target_epoch": target_epoch,
+                        "astrometry_source": "et_coord",
+                        **weight_meta,
+                    },
                 )
             )
     return reference, per_detector_stats

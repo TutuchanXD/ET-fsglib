@@ -115,6 +115,8 @@ ephemeris:
   reference_selection_mode: "visible_only"
   reference_topk: 0
   gaia_to_kp_poly_path: "/home/cxgao/ET/Photsim7-data/misc/gaia2kp_mag_pfc.npy"
+  target_epoch: 2000.0
+  reference_epoch_default: 2016.0
   enable_proper_motion: true
   enable_precession: false
   enable_nutation: false
