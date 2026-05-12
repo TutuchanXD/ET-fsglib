@@ -247,7 +247,7 @@ Each `layout.detectors[]` entry supports:
 | `preprocess.gain_e_per_dn` | float or null | `null` | active with `poisson_read_noise` | Electrons per DN/ADU for non-electron inputs. Required when `variance_model=poisson_read_noise` and the raw unit is not an electron unit. |
 | `preprocess.read_noise_e` | float or null | `null` | active with `poisson_read_noise` | Read noise in electrons. Required, and may be zero for analytic/noiseless fixtures. |
 | `preprocess.quantization_noise_e` | float | `0.0` | active with `poisson_read_noise` | Optional quantization noise term in electrons. |
-| `preprocess.dark_current_e_per_s` | float or null | `null` | active with `poisson_read_noise` | Optional scalar dark-current shot-noise source in electrons per second when no loaded dark-current map is available. If a dark-current calibration map is loaded, that map and `raw.cadence_s` are used. |
+| `preprocess.dark_current_e_per_s` | float or null | `null` | active with `poisson_read_noise` | Optional scalar dark-current shot-noise source in electrons per second, used only when the dark mean has been explicitly removed. Loaded dark-current calibration maps are preferred and use `raw.cadence_s`. |
 | `preprocess.denoise_method` | string | `none` | reserved | Denoising is not implemented. |
 
 The default `empirical_robust` variance model estimates RMS with a MAD-based
@@ -257,10 +257,11 @@ computes variance from photon counts, loaded dark-current maps scaled by
 `raw.cadence_s` when present, read noise, and quantization noise. For DN/ADU
 inputs the calculation uses `preprocess.gain_e_per_dn` internally and converts
 `variance_map` back to the output image unit squared; `PreprocessedFrame.image`,
-`background`, and `noise_map` remain in the input image unit. Flat-response
-scaling is applied through the calibrated image, but flat-field uncertainty is
-not included yet and is reported in metadata as disabled. Calibration asset paths
-are loaded by `build_models(cfg)` into
+`background`, and `noise_map` remain in the input image unit. Photon/read/dark
+variance is propagated through flat-response division when flat-field correction
+is enabled, but flat-field uncertainty itself is not included yet and is reported
+in metadata as disabled. Calibration asset paths are loaded by
+`build_models(cfg)` into
 `models["calib"]`; enabled products with missing paths, missing files, wrong
 rank, or shape mismatches raise explicit errors. `.npz` assets must either use
 the `data` array key or contain exactly one array. Local calibration products

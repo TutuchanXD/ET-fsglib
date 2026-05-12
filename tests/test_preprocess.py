@@ -226,7 +226,7 @@ def test_sigma_clip_global_background_rejects_bright_outlier():
 
 
 def test_mesh_median_background_tracks_spatial_gradient():
-    yy, xx = np.indices((32, 32), dtype=np.float64)
+    _, xx = np.indices((32, 32), dtype=np.float64)
     image = 10.0 + 0.5 * xx
     image[8, 8] += 500.0
     image[24, 24] += 500.0
@@ -318,6 +318,53 @@ def test_poisson_variance_model_adds_dark_shot_noise_from_cadence():
     assert np.allclose(pre.image, [[94.0]])
     assert np.allclose(pre.variance_map, [[54.0]])
     assert pre.preprocess_meta["variance_components"]["dark_current_source"] == "calib.dark"
+
+
+def test_poisson_variance_model_propagates_flat_response():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[200.0]], dtype=np.float64),
+        time_s=0.0,
+        unit="adu",
+    )
+    calib = {"flat": np.array([[2.0]], dtype=np.float64)}
+    cfg = _preprocess_cfg(
+        enable_flat_field=True,
+        enable_background_subtraction=False,
+        variance_model="poisson_read_noise",
+        gain_e_per_dn=2.0,
+        read_noise_e=0.0,
+        quantization_noise_e=0.0,
+    )
+
+    pre = preprocess_frame(raw, calib=calib, cfg=cfg)
+
+    assert np.allclose(pre.image, [[100.0]])
+    assert np.allclose(pre.variance_map, [[25.0]])
+    assert pre.preprocess_meta["variance_components"]["flat_response_propagated"] is True
+
+
+def test_scalar_dark_current_is_not_double_counted_when_not_subtracted():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[100.0]], dtype=np.float64),
+        time_s=0.0,
+        cadence_s=1.0,
+        unit="adu",
+    )
+    cfg = _preprocess_cfg(
+        enable_background_subtraction=False,
+        variance_model="poisson_read_noise",
+        gain_e_per_dn=2.0,
+        read_noise_e=0.0,
+        quantization_noise_e=0.0,
+        dark_current_e_per_s=10.0,
+    )
+
+    pre = preprocess_frame(raw, calib={}, cfg=cfg)
+
+    assert np.allclose(pre.variance_map, [[50.0]])
+    assert pre.preprocess_meta["variance_components"]["dark_current_source"] == "none"
 
 
 def test_poisson_variance_model_requires_gain_for_dn_inputs():

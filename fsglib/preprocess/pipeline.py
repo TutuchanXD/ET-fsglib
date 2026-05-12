@@ -329,6 +329,7 @@ def _empirical_noise_map(
 
 def _poisson_read_noise_variance_map(
     image_for_photon_noise: np.ndarray,
+    flat_response_for_variance: np.ndarray | None,
     valid_mask: np.ndarray,
     raw: RawFrame,
     dark_current_map: np.ndarray | None,
@@ -352,6 +353,13 @@ def _poisson_read_noise_variance_map(
         default=0.0,
     )
 
+    if flat_response_for_variance is None:
+        flat_response = np.ones_like(image_for_photon_noise, dtype=np.float64)
+        flat_response_propagated = False
+    else:
+        flat_response = np.asarray(flat_response_for_variance, dtype=np.float64)
+        flat_response_propagated = True
+
     signal_e = np.maximum(image_for_photon_noise, 0.0) * gain_e_per_output_unit
     dark_current_source = "none"
     dark_e = np.zeros_like(image_for_photon_noise, dtype=np.float64)
@@ -363,7 +371,10 @@ def _poisson_read_noise_variance_map(
         dark_e = np.maximum(dark_current_map, 0.0) * float(raw.cadence_s)
         dark_e *= gain_e_per_output_unit
         dark_current_source = "calib.dark"
-    elif preprocess_cfg.get("dark_current_e_per_s") is not None:
+    elif (
+        preprocess_cfg.get("dark_current_e_per_s") is not None
+        and preprocess_cfg.get("enable_dark_subtraction", False)
+    ):
         if raw.cadence_s is None:
             raise ValueError(
                 "raw.cadence_s is required when preprocess.dark_current_e_per_s is configured"
@@ -378,13 +389,19 @@ def _poisson_read_noise_variance_map(
         dark_current_source = "preprocess.dark_current_e_per_s"
 
     variance_e2 = signal_e + dark_e + read_noise_e**2 + quantization_noise_e**2
-    variance = variance_e2 / (gain_e_per_output_unit**2)
+    denominator = (gain_e_per_output_unit * flat_response) ** 2
+    variance = np.zeros_like(variance_e2, dtype=np.float64)
+    safe_denominator = np.isfinite(denominator) & (denominator > 0.0)
+    variance[safe_denominator] = variance_e2[safe_denominator] / denominator[
+        safe_denominator
+    ]
     variance = np.where(valid_mask, np.maximum(variance, _MIN_NOISE**2), _MIN_NOISE**2)
     return variance, {
         "gain_e_per_output_unit": float(gain_e_per_output_unit),
         "read_noise_e": float(read_noise_e),
         "quantization_noise_e": float(quantization_noise_e),
         "dark_current_source": dark_current_source,
+        "flat_response_propagated": flat_response_propagated,
         "flat_uncertainty_included": False,
     }
 
@@ -392,6 +409,7 @@ def _poisson_read_noise_variance_map(
 def _estimate_variance_and_noise(
     image_sub: np.ndarray,
     image_for_photon_noise: np.ndarray,
+    flat_response_for_variance: np.ndarray | None,
     valid_mask: np.ndarray,
     raw: RawFrame,
     dark_current_map: np.ndarray | None,
@@ -406,6 +424,7 @@ def _estimate_variance_and_noise(
     elif model == "poisson_read_noise":
         variance_map, details = _poisson_read_noise_variance_map(
             image_for_photon_noise,
+            flat_response_for_variance,
             valid_mask,
             raw,
             dark_current_map,
@@ -509,6 +528,8 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
             applied=False,
         )
 
+    image_for_photon_noise = image
+    flat_response_for_variance = None
     if preprocess_cfg.get("enable_flat_field", False):
         flat = _require_calibration_product(
             calib,
@@ -517,6 +538,7 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
             image_shape,
         ).astype(np.float64, copy=False)
         flat_valid = np.isfinite(flat) & (flat > 0.0)
+        flat_response_for_variance = flat
         corrected = np.zeros_like(image, dtype=np.float64)
         corrected[flat_valid] = image[flat_valid] / flat[flat_valid]
         image = corrected
@@ -564,7 +586,6 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
         )
 
     image = np.where(valid_mask, image, 0.0)
-    image_before_background = image.copy()
 
     if preprocess_cfg.get("enable_background_subtraction", True):
         background, background_meta = _estimate_background_model(image, valid_mask, cfg)
@@ -581,7 +602,8 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
     image_sub = np.where(valid_mask, image_sub, 0.0)
     variance_map, noise_map, variance_meta = _estimate_variance_and_noise(
         image_sub,
-        image_before_background,
+        image_for_photon_noise,
+        flat_response_for_variance,
         valid_mask,
         raw,
         dark_current_map,
