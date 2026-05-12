@@ -8,6 +8,7 @@ from fsglib.attitude.solver import quat_to_dcm
 from fsglib.common.types import ObservedStar
 from fsglib.match.lost_in_space import (
     LostInSpaceMatcher,
+    _rms_ratio_is_ambiguous,
     build_lis_index_from_arrays,
     load_lis_index,
     query_pairs_by_angle,
@@ -219,6 +220,60 @@ def test_lost_in_space_matcher_marks_ambiguous_repeated_geometry_unsuccessful():
     assert result.success is False
     assert result.debug["lost_in_space"]["failure_reason"] == "ambiguous_solution"
     assert result.debug["lost_in_space"]["num_ambiguous_candidates"] >= 1
+
+
+def test_lis_ambiguity_ratio_uses_relative_rms_margin_with_epsilon():
+    assert _rms_ratio_is_ambiguous(
+        best_rms_arcsec=10.0,
+        candidate_rms_arcsec=10.1,
+        ambiguity_ratio=0.98,
+        epsilon_arcsec=1.0e-6,
+    )
+    assert not _rms_ratio_is_ambiguous(
+        best_rms_arcsec=0.01,
+        candidate_rms_arcsec=0.5,
+        ambiguity_ratio=0.98,
+        epsilon_arcsec=1.0e-6,
+    )
+    assert _rms_ratio_is_ambiguous(
+        best_rms_arcsec=0.0,
+        candidate_rms_arcsec=5.0e-7,
+        ambiguity_ratio=1.0,
+        epsilon_arcsec=1.0e-6,
+    )
+    assert not _rms_ratio_is_ambiguous(
+        best_rms_arcsec=0.0,
+        candidate_rms_arcsec=2.0e-6,
+        ambiguity_ratio=1.0,
+        epsilon_arcsec=1.0e-6,
+    )
+
+
+def test_lost_in_space_seed_generation_passes_remaining_candidate_budget(monkeypatch):
+    index = build_lis_index_from_arrays(
+        catalog_ids=np.arange(400, 408, dtype=np.int64),
+        vectors=_spread_catalog_vectors(),
+        magnitudes=np.linspace(9.0, 12.5, 8),
+        config_snapshot={"epoch": 2026.0, "bandpass": "synthetic", "filters": {}},
+    )
+    observed = _observed_from_catalog(index, [0, 1, 2, 3, 4], _random_quat(seed=22))
+    matcher = LostInSpaceMatcher(index, _lis_test_cfg(max_seed_candidates=3))
+    received_budgets = []
+
+    def fake_maps_from_pair_candidates(obs_positions, pair_candidates, max_candidates):
+        received_budgets.append(max_candidates)
+        return [
+            {obs_positions[0]: 0, obs_positions[1]: 1, obs_positions[2]: 2, obs_positions[3]: 3}
+            for _ in range(min(2, max_candidates))
+        ]
+
+    monkeypatch.setattr(matcher, "_maps_from_pair_candidates", fake_maps_from_pair_candidates)
+
+    maps, debug = matcher._candidate_catalog_maps(observed)
+
+    assert len(maps) == 3
+    assert received_budgets[:2] == [3, 1]
+    assert debug["seed_candidate_limit_hit"] is True
 
 
 def test_lis_index_round_trip_and_angle_query(tmp_path):

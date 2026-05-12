@@ -249,6 +249,22 @@ def _arcsec_to_rad(value: float) -> float:
     return np.deg2rad(float(value) / 3600.0)
 
 
+def _rms_ratio_is_ambiguous(
+    *,
+    best_rms_arcsec: float,
+    candidate_rms_arcsec: float,
+    ambiguity_ratio: float,
+    epsilon_arcsec: float,
+) -> bool:
+    ratio = min(max(float(ambiguity_ratio), np.finfo(np.float64).eps), 1.0)
+    epsilon = max(float(epsilon_arcsec), 0.0)
+    best_rms = max(float(best_rms_arcsec), 0.0)
+    candidate_rms = max(float(candidate_rms_arcsec), 0.0)
+    if best_rms <= epsilon:
+        return candidate_rms <= epsilon
+    return candidate_rms <= (best_rms / ratio) + epsilon
+
+
 class LostInSpaceMatcher:
     def __init__(self, index: LISIndex, cfg: dict):
         self.index = index
@@ -314,7 +330,13 @@ class LostInSpaceMatcher:
                 pair_candidates.append((left, right, pairs))
             if not pair_candidates:
                 continue
-            candidate_maps.extend(self._maps_from_pair_candidates(obs_positions, pair_candidates, max_candidates))
+            remaining_candidates = max_candidates - len(candidate_maps)
+            if remaining_candidates <= 0:
+                debug["seed_candidate_limit_hit"] = True
+                return candidate_maps[:max_candidates], debug
+            candidate_maps.extend(
+                self._maps_from_pair_candidates(obs_positions, pair_candidates, remaining_candidates)
+            )
             debug["num_seed_maps"] = int(len(candidate_maps))
             if len(candidate_maps) >= max_candidates:
                 debug["seed_candidate_limit_hit"] = True
@@ -463,12 +485,18 @@ class LostInSpaceMatcher:
         candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
         best = candidates[0]
         ambiguity_ratio = float(self.lis_cfg.get("ambiguity_ratio", 0.98))
+        ambiguity_epsilon_arcsec = float(self.lis_cfg.get("ambiguity_rms_epsilon_arcsec", 1.0e-6))
         ambiguous_candidate = None
         best_catalog_ids = {m.catalog_id for m in best[5]}
         for candidate in candidates[1:]:
             same_support = candidate[0] == best[0]
             different_catalogs = {m.catalog_id for m in candidate[5]} != best_catalog_ids
-            close_rms = abs(candidate[6] - best[6]) <= max(1.0e-9, (1.0 - ambiguity_ratio) * max(best[6], 1.0))
+            close_rms = _rms_ratio_is_ambiguous(
+                best_rms_arcsec=best[6],
+                candidate_rms_arcsec=candidate[6],
+                ambiguity_ratio=ambiguity_ratio,
+                epsilon_arcsec=ambiguity_epsilon_arcsec,
+            )
             if same_support and different_catalogs and close_rms:
                 ambiguous_candidate = candidate
                 break
@@ -482,6 +510,8 @@ class LostInSpaceMatcher:
                     "num_candidates_scored": len(candidates),
                     "num_seed_candidates_tested": int(len(candidate_maps)),
                     "num_ambiguous_candidates": 1,
+                    "ambiguity_ratio": ambiguity_ratio,
+                    "ambiguity_rms_epsilon_arcsec": ambiguity_epsilon_arcsec,
                     "best_rms_arcsec": best[6],
                     "second_best_rms_arcsec": ambiguous_candidate[6],
                 },
