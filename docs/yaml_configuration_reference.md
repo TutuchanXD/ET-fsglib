@@ -276,16 +276,41 @@ calibration.
 | Key | Type | Default | Status | Description |
 |-----|------|---------|--------|-------------|
 | `extract.detection_image` | string | `snr` | declared | Current extractor always thresholds the SNR image. |
-| `extract.seed_threshold_sigma` | float | `5.0` | active | Pixel threshold for binary source detection: `image / noise > seed_threshold_sigma`. |
-| `extract.grow_threshold_sigma` | float | `3.0` | reserved | Region growing below the seed threshold is not implemented. |
-| `extract.min_area` | int | `3` | active | Rejects connected components with fewer pixels. |
-| `extract.max_area` | int | `200` | active | Rejects connected components with more pixels. |
+| `extract.seed_threshold_sigma` | float | `5.0` | active | High SNR threshold for hysteresis seeds: `image / noise > seed_threshold_sigma`. |
+| `extract.grow_threshold_sigma` | float | `3.0` | active | Low SNR threshold for 8-connected hysteresis growth. Must be less than or equal to `seed_threshold_sigma`. |
+| `extract.min_area` | int | `3` | active | Rejects grown connected components with fewer pixels. |
+| `extract.max_area` | int | `200` | active | Rejects grown connected components with more pixels. |
 | `extract.centroid_method` | string | `weighted_centroid` | active | Supported values: `weighted_centroid`, `fixed_window_first_moment`, `full_window_first_moment`. |
 | `extract.centroid_window.center` | string | `peak` | declared | Current fixed-window modes always center on the detected peak pixel. |
 | `extract.centroid_window.size` | odd int | `31` | active for fixed-window modes | Window size for `fixed_window_first_moment` and `full_window_first_moment`; must be positive and odd. |
 | `extract.bbox_expand` | int | `2` | active | Expands the stored segmentation bounding box for weighted centroids. |
 | `extract.reject_edge_margin` | int | `3` | active | Rejects candidates whose centroid window touches an image edge within this margin. |
-| `extract.max_ellipticity` | float | `0.8` | reserved | Shape filtering by ellipticity is not implemented. |
+| `extract.max_ellipticity` | float | `0.8` | active | Rejects candidates whose measured second-moment ellipticity exceeds this value. |
+
+Extraction uses the SNR image for segmentation. Seed and grow masks both use
+strict `>` threshold comparisons, and grow pixels must be connected to at least
+one seed pixel. Connectivity is 8-connected. If multiple seed pixels fall in the
+same grown connected component, PR12 intentionally returns one candidate; close
+source splitting is deferred to PR13 deblending. `weighted_centroid`, `flux`,
+`area`, and candidate `snr` are based on the grown segment when
+`extract.centroid_method=weighted_centroid`; in fixed-window centroid modes,
+`area` and candidate `snr` remain grown-segment measurements, while `flux` and
+`StarCandidate.bbox` come from the centroid window. The grown segment bbox is
+always preserved separately as `StarCandidate.flags["segment_bbox"]`. Setting
+`grow_threshold_sigma` equal to `seed_threshold_sigma` reproduces seed-only
+segmentation.
+
+Shape metrics are measured directly from the candidate pixels; PR12 does not use
+an external PSF model. `StarCandidate.shape` includes `sigma_major_pix`,
+`sigma_minor_pix`, `theta_rad`, `ellipticity`, `fwhm_pix`, `sharpness`,
+`roundness`, and `shape_degenerate`. Ellipticity is defined as
+`1 - sqrt(lambda_min / lambda_max)` from the second-moment eigenvalues.
+`fwhm_pix` is the major-axis second-moment proxy `2.3548 * sigma_major_pix`;
+`sharpness` is peak divided by mean grown-segment surface brightness. Degenerate
+single-pixel sources are retained with `ellipticity=0.0` and
+`shape_degenerate=true`; artifact policy for such sources is deferred to PR11.
+Accepted candidates also copy key shape values into `StarCandidate.flags` so they
+propagate through existing `ObservedStar.flags` paths.
 
 ### `extract.bias_correction`
 
@@ -678,8 +703,6 @@ behavior:
 - `preprocess.denoise_method`
 - `extract.detection_image`
 - `extract.bias_correction.auto_resolve_psf_model`
-- `extract.grow_threshold_sigma`
-- `extract.max_ellipticity`
 - `match.init_bright_star_topk`
 - `match.pair_angle_tol_arcsec`
 - `match.hypothesis_topk`

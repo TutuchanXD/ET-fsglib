@@ -64,6 +64,58 @@ def test_extract_stars_weighted_centroid_uses_segment_pixels_only():
     assert candidate.flags["centroid_bias_corrected"] is False
 
 
+def test_extract_stars_grows_connected_pixels_above_grow_threshold():
+    image = np.zeros((5, 5), dtype=np.float64)
+    image[2, 2] = 10.0
+    image[1, 1] = 4.0
+    image[0, 4] = 4.5
+    cfg = _deep_update(
+        _extract_cfg("weighted_centroid"),
+        {"extract": {"seed_threshold_sigma": 5.0, "grow_threshold_sigma": 3.0}},
+    )
+
+    candidates = extract_stars(_frame_from_image(image), cfg=cfg)
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.area == 2
+    assert np.isclose(candidate.flux, 14.0)
+    assert np.isclose(candidate.snr, 14.0 / np.sqrt(2.0))
+    assert candidate.bbox == (1, 1, 2, 2)
+    assert np.isclose(candidate.x, (2.0 * 10.0 + 1.0 * 4.0) / 14.0)
+    assert candidate.flags["segmentation_mode"] == "hysteresis"
+    assert candidate.flags["seed_threshold_sigma"] == 5.0
+    assert candidate.flags["grow_threshold_sigma"] == 3.0
+    assert candidate.flags["num_seed_pixels"] == 1
+
+
+def test_extract_stars_grow_equal_seed_reproduces_seed_only_segmentation():
+    image = np.zeros((5, 5), dtype=np.float64)
+    image[2, 2] = 10.0
+    image[2, 3] = 4.0
+    cfg = _deep_update(
+        _extract_cfg("weighted_centroid"),
+        {"extract": {"seed_threshold_sigma": 5.0, "grow_threshold_sigma": 5.0}},
+    )
+
+    candidates = extract_stars(_frame_from_image(image), cfg=cfg)
+
+    assert len(candidates) == 1
+    assert candidates[0].area == 1
+    assert np.isclose(candidates[0].flux, 10.0)
+    assert np.isclose(candidates[0].x, 2.0)
+
+
+def test_extract_stars_rejects_invalid_hysteresis_thresholds():
+    cfg = _deep_update(
+        _extract_cfg("weighted_centroid"),
+        {"extract": {"seed_threshold_sigma": 5.0, "grow_threshold_sigma": 6.0}},
+    )
+
+    with pytest.raises(ValueError, match="grow_threshold_sigma"):
+        extract_stars(_frame_from_image(np.ones((5, 5), dtype=np.float64)), cfg=cfg)
+
+
 def test_extract_stars_fixed_window_first_moment_matches_full_window_definition():
     image = np.zeros((5, 5), dtype=np.float64)
     image[2, 1] = 6.0
@@ -82,6 +134,53 @@ def test_extract_stars_fixed_window_first_moment_matches_full_window_definition(
     assert np.isclose(candidate.y, 2.0)
     assert candidate.bbox == (0, 0, 4, 4)
     assert candidate.flags["centroid_method"] == "fixed_window_first_moment"
+
+
+def test_extract_stars_populates_shape_metrics_for_round_source():
+    image = np.zeros((7, 7), dtype=np.float64)
+    image[3, 3] = 10.0
+    image[2, 3] = 4.0
+    image[4, 3] = 4.0
+    image[3, 2] = 4.0
+    image[3, 4] = 4.0
+
+    candidates = extract_stars(_frame_from_image(image), cfg=_extract_cfg("weighted_centroid"))
+
+    assert len(candidates) == 1
+    shape = candidates[0].shape
+    assert shape["shape_degenerate"] is False
+    assert shape["ellipticity"] < 0.1
+    assert shape["fwhm_pix"] > 0.0
+    assert shape["sharpness"] > 0.0
+    assert candidates[0].flags["shape_filter_passed"] is True
+    assert np.isclose(candidates[0].flags["shape_ellipticity"], shape["ellipticity"])
+
+
+def test_extract_stars_rejects_sources_above_max_ellipticity():
+    image = np.zeros((7, 7), dtype=np.float64)
+    image[3, 2] = 6.0
+    image[3, 3] = 10.0
+    image[3, 4] = 6.0
+    cfg = _deep_update(
+        _extract_cfg("weighted_centroid"),
+        {"extract": {"max_ellipticity": 0.5}},
+    )
+
+    candidates = extract_stars(_frame_from_image(image), cfg=cfg)
+
+    assert candidates == []
+
+
+def test_extract_stars_keeps_single_pixel_degenerate_shape():
+    image = np.zeros((5, 5), dtype=np.float64)
+    image[2, 2] = 10.0
+
+    candidates = extract_stars(_frame_from_image(image), cfg=_extract_cfg("weighted_centroid"))
+
+    assert len(candidates) == 1
+    assert candidates[0].shape["shape_degenerate"] is True
+    assert candidates[0].shape["ellipticity"] == 0.0
+    assert candidates[0].flags["shape_filter_passed"] is True
 
 
 def test_extract_stars_applies_bias_correction_from_profile(tmp_path):
