@@ -185,7 +185,7 @@ them from truth stars for the `sky_patch_linearized` layout model.
 | `detector.image_width` | int | `2049` | declared | Image width metadata for the default 2049-pixel guide simulation frames. |
 | `detector.pixel_size_um` | float or null | `null` | declared | Pixel size metadata in microns. |
 | `detector.saturation_value` | float or null | `null` | reserved | Saturation handling is not implemented in the current extractor. |
-| `detector.bad_pixel_map` | path string or null | `null` | reserved | Bad-pixel masking is not implemented in the current preprocessor. |
+| `detector.bad_pixel_map` | path string or null | `null` | reserved compatibility key | Bad-pixel masking is implemented through `preprocess.enable_bad_pixel_mask` and `preprocess.bad_pixel_mask_path`; this detector-level key is not consumed yet. |
 
 ## `layout`
 

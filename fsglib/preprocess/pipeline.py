@@ -248,7 +248,10 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
     preprocess_meta["num_bad_pixels"] = bad_pixel_count
     preprocess_meta["num_invalid_pixels"] = int(valid_mask.size - np.count_nonzero(valid_mask))
     background_enabled = bool(preprocess_cfg.get("enable_background_subtraction", True))
-    background_method_configured = preprocess_cfg.get("background_method", "median")
+    background_method_configured = preprocess_cfg.get(
+        "background_method",
+        "sigma_clip_global",
+    )
     background_method_effective = "median" if background_enabled else "none"
     preprocess_meta["background_subtraction_enabled"] = background_enabled
     preprocess_meta["background_method_configured"] = background_method_configured

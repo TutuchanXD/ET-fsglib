@@ -190,6 +190,21 @@ def test_preprocess_records_configured_and_effective_background_method():
     assert pre.preprocess_meta["background_method"] == "median"
 
 
+def test_preprocess_records_documented_default_background_method_when_absent():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[1.0, 2.0], [3.0, 100.0]], dtype=np.float64),
+        time_s=0.0,
+    )
+    cfg = _preprocess_cfg(enable_background_subtraction=True)
+    cfg["preprocess"].pop("background_method", None)
+
+    pre = preprocess_frame(raw, calib={}, cfg=cfg)
+
+    assert pre.preprocess_meta["background_method_configured"] == "sigma_clip_global"
+    assert pre.preprocess_meta["background_method_effective"] == "median"
+
+
 def test_load_calibration_products_from_yaml_paths(tmp_path):
     paths = {
         "bias_frame_path": tmp_path / "bias.npy",
