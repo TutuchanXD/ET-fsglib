@@ -73,22 +73,9 @@ def _finite_nonnegative_float(value: object, name: str) -> float:
 def _hysteresis_segments(
     snr_map: np.ndarray,
     valid_mask: np.ndarray,
-    extract_cfg: dict,
+    seed_th: float,
+    grow_th: float,
 ) -> list[tuple[np.ndarray, int]]:
-    seed_th = _finite_nonnegative_float(
-        extract_cfg["seed_threshold_sigma"],
-        "seed_threshold_sigma",
-    )
-    grow_th = _finite_nonnegative_float(
-        extract_cfg.get("grow_threshold_sigma", seed_th),
-        "grow_threshold_sigma",
-    )
-    if grow_th > seed_th:
-        raise ValueError(
-            "extract.grow_threshold_sigma must be less than or equal to "
-            "extract.seed_threshold_sigma"
-        )
-
     seed_mask = valid_mask & (snr_map > seed_th)
     grow_mask = valid_mask & (snr_map > grow_th)
     structure = np.ones((3, 3), dtype=bool)
@@ -216,7 +203,13 @@ def extract_stars(frame: PreprocessedFrame, cfg: dict) -> list[StarCandidate]:
         extract_cfg.get("grow_threshold_sigma", seed_th),
         "grow_threshold_sigma",
     )
-    segments = _hysteresis_segments(snr_map, mask, extract_cfg)
+    if grow_th > seed_th:
+        raise ValueError(
+            "extract.grow_threshold_sigma must be less than or equal to "
+            "extract.seed_threshold_sigma"
+        )
+
+    segments = _hysteresis_segments(snr_map, mask, seed_th, grow_th)
     candidates = []
 
     for seg, num_seed_pixels in segments:

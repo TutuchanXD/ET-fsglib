@@ -292,7 +292,11 @@ strict `>` threshold comparisons, and grow pixels must be connected to at least
 one seed pixel. Connectivity is 8-connected. If multiple seed pixels fall in the
 same grown connected component, PR12 intentionally returns one candidate; close
 source splitting is deferred to PR13 deblending. `weighted_centroid`, `flux`,
-`area`, `bbox`, and candidate `snr` are based on the grown segment. Setting
+`area`, and candidate `snr` are based on the grown segment when
+`extract.centroid_method=weighted_centroid`; in fixed-window centroid modes,
+`area` and candidate `snr` remain grown-segment measurements, while `flux` and
+`StarCandidate.bbox` come from the centroid window. The grown segment bbox is
+always preserved separately as `StarCandidate.flags["segment_bbox"]`. Setting
 `grow_threshold_sigma` equal to `seed_threshold_sigma` reproduces seed-only
 segmentation.
 
