@@ -191,8 +191,8 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 
 `PreprocessedFrame`
 
-- 预处理后的图像、背景、噪声图和有效掩膜；
-- 后续如果要引入暗电平/FPN/坏点图，在这里扩展——chenxu。
+- 预处理后的图像、背景、噪声图、方差图和有效掩膜；
+- `preprocess_meta` 记录 detector calibration chain 的资产路径、应用状态和有效像素审计。
 
 `StarCandidate`
 
@@ -284,9 +284,9 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 
 实现：
 
-- 有限值掩膜、全局背景估计和全局噪声估计；
-- `calib` 预留；
-- 李洋后续在这里加入暗场，需保持接口不变——chenxu。
+- 有限值掩膜、bias/dark/FPN/flat/bad-pixel 校准链、全局背景估计和全局噪声估计；
+- `calib` 由 `build_models(cfg)` 根据 `preprocess.*_path` YAML 配置加载；
+- `PreprocessedFrame.preprocess_meta` 记录校准项是否启用、是否应用、资产路径、形状和无效像素计数。
 
 ### 6.3 星点提取
 

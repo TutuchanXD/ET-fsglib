@@ -17,8 +17,8 @@ dataset:
 
 detector:
   num_detectors: 4
-  image_height: 1119
-  image_width: 1119
+  image_height: 2049
+  image_width: 2049
   pixel_size_um: null
   saturation_value: null
   bad_pixel_map: null
@@ -27,10 +27,16 @@ psf:
   active_model_key: null
 
 preprocess:
-  enable_bias_subtraction: false
-  enable_dark_subtraction: false
-  enable_flat_field: false
-  enable_bad_pixel_mask: false
+  enable_bias_subtraction: true
+  bias_frame_path: /home/cxgao/ET/FSG/fsglib-data/calibration/pr09_fake/2049x2049/bias_frame.npz
+  enable_dark_subtraction: true
+  dark_current_path: /home/cxgao/ET/FSG/fsglib-data/calibration/pr09_fake/2049x2049/dark_current_per_s.npz
+  enable_flat_field: true
+  flat_field_path: /home/cxgao/ET/FSG/fsglib-data/calibration/pr09_fake/2049x2049/flat_field.npz
+  enable_bad_pixel_mask: true
+  bad_pixel_mask_path: /home/cxgao/ET/FSG/fsglib-data/calibration/pr09_fake/2049x2049/bad_pixel_mask.npz
+  enable_fpn_subtraction: true
+  fpn_residual_map_path: /home/cxgao/ET/FSG/fsglib-data/calibration/pr09_fake/2049x2049/fpn_residual_map.npz
   enable_background_subtraction: true
   background_method: sigma_clip_global
   sigma_clip_k: 3.0

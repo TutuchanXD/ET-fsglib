@@ -349,6 +349,71 @@ def test_run_guide_first_frame_init_debug_context_is_opt_in(tmp_path, monkeypatc
     assert debug_result["debug_context"]["observed_stars"] is observed
 
 
+def test_build_observed_stars_passes_loaded_calibration_to_preprocess(tmp_path, monkeypatch):
+    dataset_root = tmp_path / "dataset"
+    frame_dir = dataset_root / "batch0" / "frames"
+    frame_dir.mkdir(parents=True)
+    (frame_dir / "frame000.npz").write_bytes(b"placeholder")
+    raw = SimpleNamespace(image=np.ones((3, 3)), detector_id="detA")
+    candidate = SimpleNamespace(
+        source_id=7,
+        x=1.0,
+        y=2.0,
+        flux=50.0,
+        snr=9.0,
+        area=1,
+        flags={"centroid_method": "test"},
+    )
+    transformed = SimpleNamespace(
+        x_mm=0.1,
+        y_mm=0.2,
+        field_x_deg=0.3,
+        field_y_deg=0.4,
+    )
+    geometry_adapter = SimpleNamespace(
+        pixel_to_focal=lambda *_args: transformed,
+        pixel_to_body_los=lambda *_args: np.array([0.0, 0.0, 1.0]),
+    )
+    expected_calib = {"bias": np.ones((3, 3))}
+    seen = {}
+
+    def fake_preprocess(raw_arg, calib, cfg):
+        seen["raw"] = raw_arg
+        seen["calib"] = calib
+        seen["cfg"] = cfg
+        return SimpleNamespace(image=np.ones((3, 3)))
+
+    monkeypatch.setattr(run_guide_init, "load_npz_frame", lambda *_args, **_kwargs: raw)
+    monkeypatch.setattr(run_guide_init, "preprocess_frame", fake_preprocess)
+    monkeypatch.setattr(run_guide_init, "extract_stars", lambda *_args, **_kwargs: [candidate])
+
+    observed, detector_stats, detector_contexts = run_guide_init._build_observed_stars(
+        {
+            "guide_init": {
+                "dataset_root": str(dataset_root),
+                "detector_batches": [{"detector_id": "detA", "batch_name": "batch0"}],
+                "frame_index": 0,
+            }
+        },
+        transformer=object(),
+        sim_to_detector_map={
+            "detA": {
+                "kind": "offset",
+                "offset_x_pix": 10.0,
+                "offset_y_pix": 20.0,
+            }
+        },
+        geometry_adapter=geometry_adapter,
+        calib=expected_calib,
+    )
+
+    assert seen["calib"] is expected_calib
+    assert observed[0].x == 11.0
+    assert observed[0].y == 22.0
+    assert detector_stats["detA"]["num_candidates_selected"] == 1
+    assert detector_contexts["detA"]["raw"] is raw
+
+
 def test_run_guide_first_frame_truth_noise_uses_adapter_output_only(tmp_path, monkeypatch):
     observed = [
         ObservedStar(

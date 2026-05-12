@@ -18,6 +18,7 @@ from fsglib.ephemeris.types import ReferenceStar
 from fsglib.extract.pipeline import extract_stars
 from fsglib.match.pipeline import match_stars
 from fsglib.pipeline.guide_error_audit import compute_guide_error_audit
+from fsglib.preprocess.calibration import load_calibration_products
 from fsglib.preprocess.pipeline import preprocess_frame
 
 
@@ -172,7 +173,9 @@ def _build_observed_stars(
     transformer,
     sim_to_detector_map: dict[str, dict],
     geometry_adapter,
+    calib: dict | None = None,
 ) -> tuple[list[ObservedStar], dict, dict]:
+    calib = {} if calib is None else calib
     dataset_root = Path(cfg["guide_init"]["dataset_root"]).expanduser().resolve()
     frame_index = int(cfg["guide_init"].get("frame_index", 0))
     observed: list[ObservedStar] = []
@@ -186,7 +189,7 @@ def _build_observed_stars(
         frame_path = _frame_path(batch_path, frame_index)
 
         raw = load_npz_frame(str(frame_path), detector_id=detector_id)
-        pre = preprocess_frame(raw, calib={}, cfg=cfg)
+        pre = preprocess_frame(raw, calib=calib, cfg=cfg)
         all_candidates = extract_stars(pre, cfg=cfg)
         candidates = _select_candidates_for_attitude(all_candidates, cfg=cfg)
 
@@ -331,6 +334,7 @@ def _build_reference_stars(cfg: dict, registry, catalog, GaiaSourceFilter) -> tu
 def run_guide_first_frame_init(cfg: dict, *, include_debug_context: bool = False) -> dict:
     registry, transformer, catalog, GaiaSourceFilter = _load_et_coord(cfg)
     geometry_adapter = build_exact_focalplane_geometry_adapter(cfg, registry, transformer)
+    calib = load_calibration_products(cfg)
 
     sim_to_detector_map: dict[str, dict] = {}
     dataset_root = Path(cfg["guide_init"]["dataset_root"]).expanduser().resolve()
@@ -344,6 +348,7 @@ def run_guide_first_frame_init(cfg: dict, *, include_debug_context: bool = False
         transformer,
         sim_to_detector_map,
         geometry_adapter,
+        calib,
     )
     reference, reference_stats = _build_reference_stars(cfg, registry, catalog, GaiaSourceFilter)
 
