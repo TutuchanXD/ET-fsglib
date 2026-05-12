@@ -22,6 +22,7 @@ from fsglib.ephemeris.types import ReferenceStar
 from fsglib.match.pyramid import LocalPyramidCache
 from fsglib.pipeline.evaluate import evaluate_dataset
 from fsglib.pipeline.run_tracking import (
+    _cfg_with_match_algorithm,
     _build_local_reacquire_frame,
     _build_lost_in_space_frame,
     _build_tracking_frame,
@@ -149,6 +150,26 @@ def test_update_state_machine_uses_explicit_modes_and_audit_fields():
     assert state.mode == "safe_lost"
     assert state.transition_reason == "safe_lost_after_lis_failures"
     assert state.safe_lost_count == 1
+
+
+def test_cfg_with_match_algorithm_only_copies_match_override():
+    cfg = {
+        "match": {
+            "algorithm": "predicted_position",
+            "local_pyramid": {"seed_scopes": ["single_detector"]},
+        },
+        "ephemeris": {"large_table": [1, 2, 3]},
+    }
+
+    assert _cfg_with_match_algorithm(cfg, "predicted_position") is cfg
+
+    overridden = _cfg_with_match_algorithm(cfg, "predicted_position_with_pyramid_reacquire")
+    assert overridden is not cfg
+    assert overridden["match"] is not cfg["match"]
+    assert overridden["match"]["algorithm"] == "predicted_position_with_pyramid_reacquire"
+    assert overridden["match"]["local_pyramid"] is cfg["match"]["local_pyramid"]
+    assert overridden["ephemeris"] is cfg["ephemeris"]
+    assert cfg["match"]["algorithm"] == "predicted_position"
 
 
 def test_build_local_reacquire_frame_forces_reacquire_policy(monkeypatch):

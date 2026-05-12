@@ -92,9 +92,14 @@ def _lost_in_space_match_algorithm(cfg: dict) -> str:
 
 
 def _cfg_with_match_algorithm(cfg: dict, algorithm: str) -> dict:
-    effective_cfg = deepcopy(cfg)
-    effective_cfg.setdefault("match", {})
-    effective_cfg["match"]["algorithm"] = algorithm
+    match_cfg = cfg.get("match", {})
+    if match_cfg.get("algorithm", "predicted_position") == algorithm:
+        return cfg
+
+    effective_cfg = dict(cfg)
+    effective_match_cfg = dict(match_cfg)
+    effective_match_cfg["algorithm"] = algorithm
+    effective_cfg["match"] = effective_match_cfg
     return effective_cfg
 
 
