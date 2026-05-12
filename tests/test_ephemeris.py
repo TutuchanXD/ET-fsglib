@@ -1,4 +1,6 @@
 import numpy as np
+import pandas as pd
+import pytest
 import warnings
 from astropy import units as u
 from astropy.coordinates import SkyCoord
@@ -37,6 +39,14 @@ class SinglePixelHealpix:
         return [0]
 
 
+class MultiPixelHealpix:
+    def __init__(self, pixels):
+        self.pixels = list(pixels)
+
+    def cone_search_skycoord(self, center, radius):
+        return self.pixels
+
+
 class SingleStarCatalogProvider:
     def __init__(self, star: CatalogStar):
         self.star = star
@@ -65,6 +75,12 @@ def _expected_propagated_vector(star: CatalogStar, target_epoch: float) -> np.nd
     return radec_to_unit_vector(float(moved.ra.deg), float(moved.dec.deg))
 
 
+def _write_healpix_partition(root, pixel: int, rows: list[dict]):
+    partition = root / f"healpix_n05_nested_{pixel:05d}.csv"
+    pd.DataFrame(rows).to_csv(partition, index=False)
+    return partition
+
+
 def test_healpix_catalog_provider_preserves_ref_epoch_and_missing_rv(tmp_path):
     partition = tmp_path / "healpix_n05_nested_00000.csv"
     partition.write_text(
@@ -86,6 +102,214 @@ def test_healpix_catalog_provider_preserves_ref_epoch_and_missing_rv(tmp_path):
     assert len(stars) == 1
     assert stars[0].ref_epoch == 2015.5
     assert stars[0].rv_km_s is None
+
+
+def test_healpix_catalog_provider_reuses_partition_cache_and_reports_stats(
+    tmp_path,
+    monkeypatch,
+):
+    partition = _write_healpix_partition(
+        tmp_path,
+        0,
+        [
+            {
+                "source_id": 101,
+                "ra": 10.0,
+                "dec": 20.0,
+                "g_mean_mag": 11.0,
+                "bp_mean_mag": 11.2,
+                "rp_mean_mag": 10.7,
+                "pmra": 123.0,
+                "pmdec": -45.0,
+                "ref_epoch": 2015.5,
+                "parallax": 7.0,
+            },
+            {
+                "source_id": 102,
+                "ra": 10.0,
+                "dec": 20.0,
+                "g_mean_mag": 16.0,
+                "bp_mean_mag": 16.2,
+                "rp_mean_mag": 15.7,
+                "pmra": 0.0,
+                "pmdec": 0.0,
+                "ref_epoch": 2016.0,
+                "parallax": 0.0,
+            },
+        ],
+    )
+    provider = HealpixCatalogProvider(
+        {
+            "ephemeris": {
+                "gaia_root_dir": str(tmp_path),
+                "mag_limit": 15.0,
+                "gaia_partition_cache_size": 2,
+            }
+        }
+    )
+    provider.hp = SinglePixelHealpix()
+
+    read_calls = []
+    original_read_csv = pd.read_csv
+
+    def counted_read_csv(*args, **kwargs):
+        read_calls.append(str(args[0]))
+        return original_read_csv(*args, **kwargs)
+
+    monkeypatch.setattr("fsglib.ephemeris.catalog.pd.read_csv", counted_read_csv)
+
+    stars = provider.query_region(radec_to_unit_vector(10.0, 20.0), radius_deg=1.0)
+    first_stats = provider.last_query_stats
+    cached_stars = provider.query_region(
+        radec_to_unit_vector(10.0, 20.0),
+        radius_deg=1.0,
+    )
+    second_stats = provider.last_query_stats
+
+    assert read_calls == [str(partition)]
+    assert [star.catalog_id for star in stars] == [101]
+    assert [star.catalog_id for star in cached_stars] == [101]
+    assert first_stats["cache_miss_pixels"] == [0]
+    assert first_stats["loaded_pixels"] == [0]
+    assert first_stats["num_rows_loaded"] == 2
+    assert first_stats["num_rows_after_mag_filter"] == 1
+    assert first_stats["num_rows_inside_cone"] == 1
+    assert second_stats["cache_hit_pixels"] == [0]
+    assert second_stats["cache_miss_pixels"] == []
+    assert second_stats["num_cache_hits"] == 1
+    assert second_stats["num_stars_returned"] == 1
+    assert stars[0].meta["catalog_provider"] == "HealpixCatalogProvider"
+    assert stars[0].meta["catalog_root_dir"] == str(tmp_path)
+    assert stars[0].meta["catalog_file"] == str(partition)
+    assert stars[0].meta["healpix_pixel"] == 0
+    assert stars[0].meta["healpix_nside"] == 32
+    assert stars[0].meta["healpix_order"] == "nested"
+    assert stars[0].meta["query_radius_deg"] == 1.0
+    assert stars[0].meta["query_mag_limit"] == 15.0
+
+
+def test_healpix_catalog_provider_evicts_lru_partition_cache(tmp_path, monkeypatch):
+    for pixel, source_id in [(0, 101), (1, 102)]:
+        _write_healpix_partition(
+            tmp_path,
+            pixel,
+            [
+                {
+                    "source_id": source_id,
+                    "ra": 10.0,
+                    "dec": 20.0,
+                    "g_mean_mag": 11.0,
+                    "bp_mean_mag": 11.2,
+                    "rp_mean_mag": 10.7,
+                    "pmra": 0.0,
+                    "pmdec": 0.0,
+                    "ref_epoch": 2016.0,
+                    "parallax": 0.0,
+                }
+            ],
+        )
+    provider = HealpixCatalogProvider(
+        {
+            "ephemeris": {
+                "gaia_root_dir": str(tmp_path),
+                "mag_limit": 15.0,
+                "gaia_partition_cache_size": 1,
+            }
+        }
+    )
+
+    read_calls = []
+    original_read_csv = pd.read_csv
+
+    def counted_read_csv(*args, **kwargs):
+        read_calls.append(str(args[0]))
+        return original_read_csv(*args, **kwargs)
+
+    monkeypatch.setattr("fsglib.ephemeris.catalog.pd.read_csv", counted_read_csv)
+
+    provider.hp = MultiPixelHealpix([0])
+    provider.query_region(radec_to_unit_vector(10.0, 20.0), radius_deg=1.0)
+    provider.hp = MultiPixelHealpix([1])
+    provider.query_region(radec_to_unit_vector(10.0, 20.0), radius_deg=1.0)
+    eviction_stats = provider.last_query_stats
+    provider.hp = MultiPixelHealpix([0])
+    provider.query_region(radec_to_unit_vector(10.0, 20.0), radius_deg=1.0)
+    reload_stats = provider.last_query_stats
+
+    assert len(read_calls) == 3
+    assert eviction_stats["cache_evicted_pixels"] == [0]
+    assert eviction_stats["num_cache_evictions"] == 1
+    assert reload_stats["cache_miss_pixels"] == [0]
+    assert reload_stats["loaded_pixels"] == [0]
+
+
+def test_healpix_catalog_provider_records_missing_partition_policy(tmp_path):
+    _write_healpix_partition(
+        tmp_path,
+        0,
+        [
+            {
+                "source_id": 101,
+                "ra": 10.0,
+                "dec": 20.0,
+                "g_mean_mag": 11.0,
+                "bp_mean_mag": 11.2,
+                "rp_mean_mag": 10.7,
+                "pmra": 0.0,
+                "pmdec": 0.0,
+                "ref_epoch": 2016.0,
+                "parallax": 0.0,
+            }
+        ],
+    )
+    provider = HealpixCatalogProvider(
+        {
+            "ephemeris": {
+                "gaia_root_dir": str(tmp_path),
+                "mag_limit": 15.0,
+                "missing_partition_policy": "warn",
+            }
+        }
+    )
+    provider.hp = MultiPixelHealpix([0, 1])
+
+    with pytest.warns(RuntimeWarning, match="missing Gaia catalog partition"):
+        stars = provider.query_region(radec_to_unit_vector(10.0, 20.0), radius_deg=1.0)
+
+    stats = provider.last_query_stats
+    assert [star.catalog_id for star in stars] == [101]
+    assert stats["missing_pixels"] == [1]
+    assert stats["num_missing_partitions"] == 1
+    assert stats["num_stars_returned"] == 1
+
+    provider_error = HealpixCatalogProvider(
+        {
+            "ephemeris": {
+                "gaia_root_dir": str(tmp_path),
+                "mag_limit": 15.0,
+                "missing_partition_policy": "error",
+            }
+        }
+    )
+    provider_error.hp = MultiPixelHealpix([0, 1])
+
+    with pytest.raises(FileNotFoundError, match="missing Gaia catalog partition"):
+        provider_error.query_region(radec_to_unit_vector(10.0, 20.0), radius_deg=1.0)
+
+    assert provider_error.last_query_stats["missing_pixels"] == [1]
+
+
+def test_healpix_catalog_provider_rejects_invalid_missing_partition_policy(tmp_path):
+    with pytest.raises(ValueError, match="missing_partition_policy"):
+        HealpixCatalogProvider(
+            {
+                "ephemeris": {
+                    "gaia_root_dir": str(tmp_path),
+                    "mag_limit": 15.0,
+                    "missing_partition_policy": "skip",
+                }
+            }
+        )
 
 
 def test_build_reference_stars_uses_init_branch():

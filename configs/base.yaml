@@ -117,6 +117,8 @@ ephemeris:
   catalog_backend: "healpix"
   gaia_root_dir: "/home/cxgao/gaia_dr3_19mag"
   mag_limit: 15.0
+  gaia_partition_cache_size: 8
+  missing_partition_policy: ignore
   tracking_catalog_radius_deg: 2.0
   reference_selection_mode: "visible_only"
   reference_topk: 0
