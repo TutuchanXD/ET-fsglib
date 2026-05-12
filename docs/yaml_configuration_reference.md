@@ -228,17 +228,31 @@ Each `layout.detectors[]` entry supports:
 
 | Key | Type | Default | Status | Description |
 |-----|------|---------|--------|-------------|
-| `preprocess.enable_background_subtraction` | bool | `true` | active | If true, subtracts a scalar median background from finite pixels. |
-| `preprocess.enable_bias_subtraction` | bool | `false` | reserved | Bias-frame subtraction is not implemented. |
-| `preprocess.enable_dark_subtraction` | bool | `false` | reserved | Dark-frame subtraction is not implemented. |
-| `preprocess.enable_flat_field` | bool | `false` | reserved | Flat-field correction is not implemented. |
-| `preprocess.enable_bad_pixel_mask` | bool | `false` | reserved | Bad-pixel masking is not implemented. |
+| `preprocess.enable_background_subtraction` | bool | `true` | active | If true, subtracts a scalar median background from finite pixels after detector calibration. |
+| `preprocess.enable_bias_subtraction` | bool | `false` | active | If true, subtracts `preprocess.bias_frame_path` from the raw image before dark/FPN/flat correction. |
+| `preprocess.bias_frame_path` | path string or null | `null` | active with bias subtraction | `.npy` or `.npz` 2-D finite numeric bias frame. Missing path raises an error when enabled. |
+| `preprocess.enable_dark_subtraction` | bool | `false` | active | If true, subtracts `preprocess.dark_current_path * raw.cadence_s`. Missing `raw.cadence_s` raises an error. |
+| `preprocess.dark_current_path` | path string or null | `null` | active with dark subtraction | `.npy` or `.npz` 2-D finite numeric dark-current map in image units per second. |
+| `preprocess.enable_flat_field` | bool | `false` | active | If true, divides by `preprocess.flat_field_path`; non-finite or non-positive flat pixels are marked invalid. |
+| `preprocess.flat_field_path` | path string or null | `null` | active with flat field | `.npy` or `.npz` 2-D numeric flat/PRNU response map. Positive finite pixels are used as divisors. |
+| `preprocess.enable_bad_pixel_mask` | bool | `false` | active | If true, applies `preprocess.bad_pixel_mask_path`; `true` or `1` means bad and sets `valid_mask=false`. |
+| `preprocess.bad_pixel_mask_path` | path string or null | `null` | active with bad-pixel mask | `.npy` or `.npz` 2-D bool or numeric 0/1 mask matching the raw image shape. |
+| `preprocess.enable_fpn_subtraction` | bool | `false` | active | If true, subtracts an additive fixed-pattern residual map before flat-field correction. |
+| `preprocess.fpn_residual_map_path` | path string or null | `null` | active with FPN subtraction | `.npy` or `.npz` 2-D finite numeric residual map matching the raw image shape. |
 | `preprocess.background_method` | string | `sigma_clip_global` | declared | Current implementation always uses a simple median. |
 | `preprocess.sigma_clip_k` | float | `3.0` | reserved | Sigma clipping is not implemented in the current background estimator. |
 | `preprocess.denoise_method` | string | `none` | reserved | Denoising is not implemented. |
 
 The current noise map is a constant image filled with the standard deviation of
-the background-subtracted finite pixels, floored at `1e-6`.
+the calibrated, background-subtracted valid pixels, floored at `1e-6`.
+`PreprocessedFrame.variance_map` is populated as `noise_map**2` for PR9
+compatibility; the physical Poisson/read-noise variance model is deferred to
+PR10. Calibration asset paths are loaded by `build_models(cfg)` into
+`models["calib"]`; enabled products with missing paths, missing files, wrong
+rank, or shape mismatches raise explicit errors. `.npz` assets must either use
+the `data` array key or contain exactly one array. Local calibration products
+should live outside the source repository, for example under
+`/home/cxgao/ET/FSG/fsglib-data/calibration/`, and be referenced by YAML path.
 
 ## `extract`
 
@@ -644,10 +658,6 @@ The following keys are present in YAML but currently do not change runtime
 behavior:
 
 - `io.*`
-- `preprocess.enable_bias_subtraction`
-- `preprocess.enable_dark_subtraction`
-- `preprocess.enable_flat_field`
-- `preprocess.enable_bad_pixel_mask`
 - `preprocess.background_method`
 - `preprocess.sigma_clip_k`
 - `preprocess.denoise_method`

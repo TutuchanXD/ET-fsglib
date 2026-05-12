@@ -28,9 +28,15 @@ psf:
 
 preprocess:
   enable_bias_subtraction: false
+  bias_frame_path: null
   enable_dark_subtraction: false
+  dark_current_path: null
   enable_flat_field: false
+  flat_field_path: null
   enable_bad_pixel_mask: false
+  bad_pixel_mask_path: null
+  enable_fpn_subtraction: false
+  fpn_residual_map_path: null
   enable_background_subtraction: true
   background_method: sigma_clip_global
   sigma_clip_k: 3.0

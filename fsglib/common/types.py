@@ -31,6 +31,7 @@ class PreprocessedFrame:
     background: np.ndarray | float
     noise_map: np.ndarray | float
     valid_mask: np.ndarray
+    variance_map: np.ndarray | float | None = None
     preprocess_meta: dict = field(default_factory=dict)
 
 @dataclass
