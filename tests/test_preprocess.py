@@ -172,6 +172,24 @@ def test_preprocess_calibration_preserves_extractable_star_flux_and_centroid():
     assert np.isclose(candidates[0].flux, 100.0)
 
 
+def test_preprocess_records_configured_and_effective_background_method():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[1.0, 2.0], [3.0, 100.0]], dtype=np.float64),
+        time_s=0.0,
+    )
+    cfg = _preprocess_cfg(
+        enable_background_subtraction=True,
+        background_method="sigma_clip_global",
+    )
+
+    pre = preprocess_frame(raw, calib={}, cfg=cfg)
+
+    assert pre.preprocess_meta["background_method_configured"] == "sigma_clip_global"
+    assert pre.preprocess_meta["background_method_effective"] == "median"
+    assert pre.preprocess_meta["background_method"] == "median"
+
+
 def test_load_calibration_products_from_yaml_paths(tmp_path):
     paths = {
         "bias_frame_path": tmp_path / "bias.npy",
@@ -217,6 +235,13 @@ def test_load_calibration_products_requires_configured_path_for_enabled_product(
         load_calibration_products(cfg)
 
 
+def test_load_calibration_products_rejects_directory_path(tmp_path):
+    cfg = _preprocess_cfg(enable_bias_subtraction=True, bias_frame_path=str(tmp_path))
+
+    with pytest.raises(ValueError, match="must be a file"):
+        load_calibration_products(cfg)
+
+
 def test_load_calibration_products_accepts_npz_data_key(tmp_path):
     bias_path = tmp_path / "bias.npz"
     np.savez_compressed(bias_path, data=np.full((2, 2), 3.0, dtype=np.float32))
@@ -227,6 +252,20 @@ def test_load_calibration_products_accepts_npz_data_key(tmp_path):
     assert np.array_equal(calib["bias"], np.full((2, 2), 3.0))
     assert calib["meta"]["bias"]["format"] == "npz"
     assert calib["meta"]["bias"]["array_key"] == "data"
+
+
+def test_load_calibration_products_warns_for_fake_assets(tmp_path):
+    fake_dir = tmp_path / "fsglib-data" / "calibration" / "pr09_fake" / "2049x2049"
+    fake_dir.mkdir(parents=True)
+    bias_path = fake_dir / "bias_frame.npz"
+    np.savez_compressed(bias_path, data=np.zeros((2, 2), dtype=np.float32))
+    cfg = _preprocess_cfg(enable_bias_subtraction=True, bias_frame_path=str(bias_path))
+
+    with pytest.warns(RuntimeWarning, match="fake PR9 calibration assets"):
+        calib = load_calibration_products(cfg)
+
+    assert calib["meta"]["uses_fake_calibration_assets"] is True
+    assert calib["meta"]["bias"]["asset_kind"] == "fake"
 
 
 def test_build_models_loads_configured_calibration_products(tmp_path):

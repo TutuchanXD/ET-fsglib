@@ -181,8 +181,8 @@ them from truth stars for the `sky_patch_linearized` layout model.
 | Key | Type | Default | Status | Description |
 |-----|------|---------|--------|-------------|
 | `detector.num_detectors` | int | `4` | declared | Detector count metadata. |
-| `detector.image_height` | int | `1119` | declared | Image height metadata for workflow configuration. Guide workflows override this to `2049`. |
-| `detector.image_width` | int | `1119` | declared | Image width metadata for workflow configuration. Guide workflows override this to `2049`. |
+| `detector.image_height` | int | `2049` | declared | Image height metadata for the default 2049-pixel guide simulation frames. |
+| `detector.image_width` | int | `2049` | declared | Image width metadata for the default 2049-pixel guide simulation frames. |
 | `detector.pixel_size_um` | float or null | `null` | declared | Pixel size metadata in microns. |
 | `detector.saturation_value` | float or null | `null` | reserved | Saturation handling is not implemented in the current extractor. |
 | `detector.bad_pixel_map` | path string or null | `null` | reserved | Bad-pixel masking is not implemented in the current preprocessor. |
@@ -229,16 +229,16 @@ Each `layout.detectors[]` entry supports:
 | Key | Type | Default | Status | Description |
 |-----|------|---------|--------|-------------|
 | `preprocess.enable_background_subtraction` | bool | `true` | active | If true, subtracts a scalar median background from finite pixels after detector calibration. |
-| `preprocess.enable_bias_subtraction` | bool | `false` | active | If true, subtracts `preprocess.bias_frame_path` from the raw image before dark/FPN/flat correction. |
-| `preprocess.bias_frame_path` | path string or null | `null` | active with bias subtraction | `.npy` or `.npz` 2-D finite numeric bias frame. Missing path raises an error when enabled. |
-| `preprocess.enable_dark_subtraction` | bool | `false` | active | If true, subtracts `preprocess.dark_current_path * raw.cadence_s`. Missing `raw.cadence_s` raises an error. |
-| `preprocess.dark_current_path` | path string or null | `null` | active with dark subtraction | `.npy` or `.npz` 2-D finite numeric dark-current map in image units per second. |
-| `preprocess.enable_flat_field` | bool | `false` | active | If true, divides by `preprocess.flat_field_path`; non-finite or non-positive flat pixels are marked invalid. |
-| `preprocess.flat_field_path` | path string or null | `null` | active with flat field | `.npy` or `.npz` 2-D numeric flat/PRNU response map. Positive finite pixels are used as divisors. |
-| `preprocess.enable_bad_pixel_mask` | bool | `false` | active | If true, applies `preprocess.bad_pixel_mask_path`; `true` or `1` means bad and sets `valid_mask=false`. |
-| `preprocess.bad_pixel_mask_path` | path string or null | `null` | active with bad-pixel mask | `.npy` or `.npz` 2-D bool or numeric 0/1 mask matching the raw image shape. |
-| `preprocess.enable_fpn_subtraction` | bool | `false` | active | If true, subtracts an additive fixed-pattern residual map before flat-field correction. |
-| `preprocess.fpn_residual_map_path` | path string or null | `null` | active with FPN subtraction | `.npy` or `.npz` 2-D finite numeric residual map matching the raw image shape. |
+| `preprocess.enable_bias_subtraction` | bool | `true` | active | If true, subtracts `preprocess.bias_frame_path` from the raw image before dark/FPN/flat correction. `base.yaml` points to a no-op 2049-pixel PR9 fake asset. |
+| `preprocess.bias_frame_path` | path string or null | local fake 2049 asset | active with bias subtraction | `.npy` or `.npz` 2-D finite numeric bias frame. Missing path raises an error when enabled. |
+| `preprocess.enable_dark_subtraction` | bool | `true` | active | If true, subtracts `preprocess.dark_current_path * raw.cadence_s`. Missing `raw.cadence_s` raises an error. |
+| `preprocess.dark_current_path` | path string or null | local fake 2049 asset | active with dark subtraction | `.npy` or `.npz` 2-D finite numeric dark-current map in image units per second. |
+| `preprocess.enable_flat_field` | bool | `true` | active | If true, divides by `preprocess.flat_field_path`; non-finite or non-positive flat pixels are marked invalid. |
+| `preprocess.flat_field_path` | path string or null | local fake 2049 asset | active with flat field | `.npy` or `.npz` 2-D numeric flat/PRNU response map. Positive finite pixels are used as divisors. |
+| `preprocess.enable_bad_pixel_mask` | bool | `true` | active | If true, applies `preprocess.bad_pixel_mask_path`; `true` or `1` means bad and sets `valid_mask=false`. |
+| `preprocess.bad_pixel_mask_path` | path string or null | local fake 2049 asset | active with bad-pixel mask | `.npy` or `.npz` 2-D bool or numeric 0/1 mask matching the raw image shape. |
+| `preprocess.enable_fpn_subtraction` | bool | `true` | active | If true, subtracts an additive fixed-pattern residual map before flat-field correction. `base.yaml` points to a no-op 2049-pixel PR9 fake asset. |
+| `preprocess.fpn_residual_map_path` | path string or null | local fake 2049 asset | active with FPN subtraction | `.npy` or `.npz` 2-D finite numeric residual map matching the raw image shape. |
 | `preprocess.background_method` | string | `sigma_clip_global` | declared | Current implementation always uses a simple median. |
 | `preprocess.sigma_clip_k` | float | `3.0` | reserved | Sigma clipping is not implemented in the current background estimator. |
 | `preprocess.denoise_method` | string | `none` | reserved | Denoising is not implemented. |
@@ -251,8 +251,11 @@ PR10. Calibration asset paths are loaded by `build_models(cfg)` into
 `models["calib"]`; enabled products with missing paths, missing files, wrong
 rank, or shape mismatches raise explicit errors. `.npz` assets must either use
 the `data` array key or contain exactly one array. Local calibration products
-should live outside the source repository, for example under
-`/home/cxgao/ET/FSG/fsglib-data/calibration/`, and be referenced by YAML path.
+should live outside the source repository, for example under an external
+`fsglib-data/calibration/` asset root, and be referenced by YAML path. The
+default `base.yaml` paths use PR9 fake 2049-pixel no-op assets; loading those
+assets emits a `RuntimeWarning` so precision runs do not silently use fake
+calibration.
 
 ## `extract`
 

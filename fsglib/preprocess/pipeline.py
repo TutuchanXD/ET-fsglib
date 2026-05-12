@@ -247,10 +247,13 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
     preprocess_meta["num_finite_input_pixels"] = int(np.count_nonzero(np.isfinite(raw.image)))
     preprocess_meta["num_bad_pixels"] = bad_pixel_count
     preprocess_meta["num_invalid_pixels"] = int(valid_mask.size - np.count_nonzero(valid_mask))
-    preprocess_meta["background_subtraction_enabled"] = bool(
-        preprocess_cfg.get("enable_background_subtraction", True)
-    )
-    preprocess_meta["background_method"] = preprocess_cfg.get("background_method", "median")
+    background_enabled = bool(preprocess_cfg.get("enable_background_subtraction", True))
+    background_method_configured = preprocess_cfg.get("background_method", "median")
+    background_method_effective = "median" if background_enabled else "none"
+    preprocess_meta["background_subtraction_enabled"] = background_enabled
+    preprocess_meta["background_method_configured"] = background_method_configured
+    preprocess_meta["background_method_effective"] = background_method_effective
+    preprocess_meta["background_method"] = background_method_effective
 
     return PreprocessedFrame(
         detector_id=raw.detector_id,

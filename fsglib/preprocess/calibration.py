@@ -1,3 +1,4 @@
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,10 @@ def _resolve_calibration_path(path_value: str | Path, path_key: str) -> Path:
     )
     for candidate in candidates:
         if candidate.exists():
+            if not candidate.is_file():
+                raise ValueError(
+                    f"Calibration asset for preprocess.{path_key} must be a file: {candidate}"
+                )
             return candidate.resolve()
 
     tried = ", ".join(str(candidate) for candidate in candidates)
@@ -66,17 +71,17 @@ def _load_calibration_array(path: Path) -> tuple[np.ndarray, str]:
     if suffix == ".npy":
         return np.load(path, allow_pickle=False), "npy"
     if suffix == ".npz":
-        payload = np.load(path, allow_pickle=False)
-        if "data" in payload.files:
-            return payload["data"], "npz:data"
-        if len(payload.files) == 1:
-            key = payload.files[0]
-            return payload[key], f"npz:{key}"
-        keys = ", ".join(payload.files)
-        raise ValueError(
-            f"Calibration asset {path} is an npz with multiple arrays; "
-            f"expected key 'data', got keys: {keys}"
-        )
+        with np.load(path, allow_pickle=False) as payload:
+            if "data" in payload.files:
+                return np.array(payload["data"], copy=True), "npz:data"
+            if len(payload.files) == 1:
+                key = payload.files[0]
+                return np.array(payload[key], copy=True), f"npz:{key}"
+            keys = ", ".join(payload.files)
+            raise ValueError(
+                f"Calibration asset {path} is an npz with multiple arrays; "
+                f"expected key 'data', got keys: {keys}"
+            )
     raise ValueError(
         f"Unsupported calibration asset format for {path}; expected .npy or .npz"
     )
@@ -127,10 +132,16 @@ def _normalize_product(name: str, kind: str, array: Any) -> np.ndarray:
     return _as_additive_map(name, array)
 
 
+def _is_fake_calibration_asset(path: Path) -> bool:
+    parts = set(path.parts)
+    return "fsglib-data" in parts and "pr09_fake" in parts
+
+
 def load_calibration_products(cfg: dict) -> dict:
     """Load configured detector calibration products from YAML paths."""
     preprocess_cfg = _preprocess_cfg(cfg)
     products: dict[str, Any] = {"meta": {}}
+    fake_asset_paths: list[str] = []
 
     for name, spec in _CALIBRATION_PRODUCTS.items():
         enabled_key = spec["enabled_key"]
@@ -141,12 +152,27 @@ def load_calibration_products(cfg: dict) -> dict:
         resolved_path = _resolve_calibration_path(preprocess_cfg.get(path_key), path_key)
         raw_array, array_format = _load_calibration_array(resolved_path)
         products[name] = _normalize_product(name, spec["kind"], raw_array)
+        is_fake_asset = _is_fake_calibration_asset(resolved_path)
+        if is_fake_asset:
+            fake_asset_paths.append(str(resolved_path))
+
         products["meta"][name] = {
             "path": str(resolved_path),
             "format": array_format.split(":", 1)[0],
             "array_key": array_format.split(":", 1)[1] if ":" in array_format else None,
             "shape": tuple(products[name].shape),
             "dtype": str(products[name].dtype),
+            "asset_kind": "fake" if is_fake_asset else "calibration",
         }
+
+    products["meta"]["uses_fake_calibration_assets"] = bool(fake_asset_paths)
+    if fake_asset_paths:
+        warnings.warn(
+            "Using fake PR9 calibration assets from fsglib-data; replace "
+            "preprocess.*_path values with validated detector calibration products "
+            "before precision runs.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     return products
