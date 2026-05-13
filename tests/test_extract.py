@@ -225,6 +225,28 @@ def test_extract_stars_rejects_candidates_overlapping_artifact_masks():
     assert candidates == []
 
 
+@pytest.mark.parametrize("margin", [-1, 1.9, "bad"])
+def test_extract_stars_rejects_invalid_artifact_mask_margin(margin):
+    image = np.zeros((5, 5), dtype=np.float64)
+    image[2, 2] = 10.0
+    artifact = np.zeros_like(image, dtype=bool)
+    cfg = _deep_update(
+        _extract_cfg("weighted_centroid"),
+        {
+            "extract": {
+                "reject_artifact_mask_overlap": True,
+                "artifact_mask_margin_pix": margin,
+            }
+        },
+    )
+
+    with pytest.raises(ValueError, match="extract.artifact_mask_margin_pix"):
+        extract_stars(
+            _frame_from_image(image, artifact_masks={"saturated": artifact}),
+            cfg=cfg,
+        )
+
+
 def test_extract_stars_applies_bias_correction_from_profile(tmp_path):
     image = np.zeros((5, 5), dtype=np.float64)
     image[2, 1] = 6.0

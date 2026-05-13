@@ -314,7 +314,7 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 - `extract.min_area / max_area`
 - `extract.max_ellipticity`
 - `extract.reject_degenerate_sources`
-- `extract.min_fwhm_pix / max_sharpness`
+- `extract.min_fwhm_pix / extract.max_sharpness`
 - `extract.reject_artifact_mask_overlap`
 - `extract.centroid_method`
 - `extract.centroid_window.size`

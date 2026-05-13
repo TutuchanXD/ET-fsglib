@@ -105,6 +105,18 @@ def _finite_nonnegative_float(value: object, name: str) -> float:
     return result
 
 
+def _finite_nonnegative_int(value: object, name: str, default: int = 0) -> int:
+    if value is None:
+        return default
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"extract.{name} must be a non-negative integer") from exc
+    if not np.isfinite(numeric) or not numeric.is_integer() or numeric < 0:
+        raise ValueError(f"extract.{name} must be a non-negative integer")
+    return int(numeric)
+
+
 def _hysteresis_segments(
     snr_map: np.ndarray,
     valid_mask: np.ndarray,
@@ -279,11 +291,15 @@ def extract_stars(frame: PreprocessedFrame, cfg: dict) -> list[StarCandidate]:
             if float(shape["sharpness"]) > max_sharpness:
                 continue
         if extract_cfg.get("reject_artifact_mask_overlap", False):
+            artifact_mask_margin_pix = _finite_nonnegative_int(
+                extract_cfg.get("artifact_mask_margin_pix", 0),
+                "artifact_mask_margin_pix",
+            )
             artifact_reason = _artifact_overlap_reason(
                 getattr(frame, "artifact_masks", {}) or {},
                 segment_bbox,
                 image.shape,
-                int(extract_cfg.get("artifact_mask_margin_pix", 0)),
+                artifact_mask_margin_pix,
             )
             if artifact_reason is not None:
                 continue

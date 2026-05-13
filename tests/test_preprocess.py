@@ -136,6 +136,45 @@ def test_preprocess_saturation_guard_masks_saturated_pixels_by_default():
     assert pre.preprocess_meta["num_invalid_pixels"] == 2
 
 
+def test_preprocess_rejects_noninteger_saturation_guard_margin():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[10.0, 4096.0]], dtype=np.float64),
+        time_s=0.0,
+        unit="adu",
+    )
+    cfg = {
+        **_preprocess_cfg(
+            enable_adc_clip=True,
+            saturation_mask_dilation_pix=1.9,
+        ),
+        "detector": {"adc_bit_depth": 12},
+    }
+
+    with pytest.raises(ValueError, match="preprocess.saturation_mask_dilation_pix"):
+        preprocess_frame(raw, calib={}, cfg=cfg)
+
+
+def test_preprocess_reports_adc_bit_depth_when_derived_max_is_invalid():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[1.0]], dtype=np.float64),
+        time_s=0.0,
+        unit="adu",
+    )
+    cfg = {
+        **_preprocess_cfg(enable_adc_clip=True),
+        "detector": {
+            "adc_min_value": 10.0,
+            "adc_bit_depth": 2,
+            "saturation_value": None,
+        },
+    }
+
+    with pytest.raises(ValueError, match="adc_bit_depth.*adc_min_value"):
+        preprocess_frame(raw, calib={}, cfg=cfg)
+
+
 def test_preprocess_raises_when_enabled_calibration_product_is_missing():
     raw = RawFrame(
         detector_id=0,

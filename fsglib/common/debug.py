@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,14 @@ def _get_field(obj: Any, name: str, default: Any = None) -> Any:
     if isinstance(obj, dict):
         return obj.get(name, default)
     return default
+
+
+def _safe_artifact_mask_filename(name: object) -> str:
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(name))
+    safe_name = safe_name.strip("._")
+    if not safe_name:
+        safe_name = "mask"
+    return f"artifact_mask_{safe_name}.npy"
 
 
 def _to_builtin(value: Any) -> Any:
@@ -803,7 +812,10 @@ def save_debug_bundle(result: Any, cfg: dict) -> Path | None:
         np.save(bundle_dir / "preprocessed.npy", preprocessed.image)
         np.save(bundle_dir / "noise_map.npy", preprocessed.noise_map)
         for name, mask in getattr(preprocessed, "artifact_masks", {}).items():
-            np.save(bundle_dir / f"artifact_mask_{name}.npy", np.asarray(mask, dtype=bool))
+            np.save(
+                bundle_dir / _safe_artifact_mask_filename(name),
+                np.asarray(mask, dtype=bool),
+            )
 
     _write_json(bundle_dir / "truth_stars.json", truth_payload)
     _write_json(bundle_dir / "reference_stars.json", reference_payload)

@@ -133,7 +133,13 @@ def _required_nonnegative_float(value: object, name: str) -> float:
 def _nonnegative_int(value: object, name: str, default: int = 0) -> int:
     if value is None:
         return default
-    result = int(value)
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"preprocess.{name} must be a non-negative integer") from exc
+    if not np.isfinite(numeric) or not numeric.is_integer():
+        raise ValueError(f"preprocess.{name} must be a non-negative integer")
+    result = int(numeric)
     if result < 0:
         raise ValueError(f"preprocess.{name} must be a non-negative integer")
     return result
@@ -189,6 +195,11 @@ def _adc_clip_limits(cfg: dict) -> tuple[bool, float, float, int | None]:
             raise ValueError("detector.saturation_value must be finite")
 
     if max_value <= min_value:
+        if max_value_config is None:
+            raise ValueError(
+                "detector maximum derived from adc_bit_depth must be greater than "
+                "detector.adc_min_value"
+            )
         raise ValueError("detector.saturation_value must be greater than detector.adc_min_value")
     return enabled, min_value, max_value, bit_depth
 
