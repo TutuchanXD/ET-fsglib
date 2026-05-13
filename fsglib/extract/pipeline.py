@@ -60,6 +60,41 @@ def _bbox_touches_edge(
     return x0 < margin or y0 < margin or x1 >= width - margin or y1 >= height - margin
 
 
+def _expand_existing_bbox(
+    bbox: tuple[int, int, int, int],
+    image_shape: tuple[int, int],
+    margin: int,
+) -> tuple[int, int, int, int]:
+    height, width = image_shape
+    x0, y0, x1, y1 = bbox
+    return (
+        max(int(x0) - margin, 0),
+        max(int(y0) - margin, 0),
+        min(int(x1) + margin, width - 1),
+        min(int(y1) + margin, height - 1),
+    )
+
+
+def _artifact_overlap_reason(
+    artifact_masks: dict,
+    bbox: tuple[int, int, int, int],
+    image_shape: tuple[int, int],
+    margin: int,
+) -> str | None:
+    if not artifact_masks:
+        return None
+    x0, y0, x1, y1 = _expand_existing_bbox(bbox, image_shape, margin)
+    for name, mask in artifact_masks.items():
+        mask_arr = np.asarray(mask, dtype=bool)
+        if mask_arr.shape != image_shape:
+            raise ValueError(
+                f"artifact mask {name!r} shape {mask_arr.shape} does not match image shape {image_shape}"
+            )
+        if np.any(mask_arr[y0 : y1 + 1, x0 : x1 + 1]):
+            return str(name)
+    return None
+
+
 def _finite_nonnegative_float(value: object, name: str) -> float:
     try:
         result = float(value)
@@ -225,7 +260,33 @@ def extract_stars(frame: PreprocessedFrame, cfg: dict) -> list[StarCandidate]:
         peak_index = int(np.argmax(image[seg]))
         peak_x = int(xs[peak_index])
         peak_y = int(ys[peak_index])
+        segment_bbox = _expanded_bbox(
+            xs, ys, image.shape, int(extract_cfg.get("bbox_expand", 0))
+        )
         shape = _shape_metrics_from_mask(image, seg, peak)
+        if extract_cfg.get("reject_degenerate_sources", False) and bool(
+            shape["shape_degenerate"]
+        ):
+            continue
+        min_fwhm_pix = extract_cfg.get("min_fwhm_pix")
+        if min_fwhm_pix is not None:
+            min_fwhm_pix = _finite_nonnegative_float(min_fwhm_pix, "min_fwhm_pix")
+            if float(shape["fwhm_pix"]) < min_fwhm_pix:
+                continue
+        max_sharpness = extract_cfg.get("max_sharpness")
+        if max_sharpness is not None:
+            max_sharpness = _finite_nonnegative_float(max_sharpness, "max_sharpness")
+            if float(shape["sharpness"]) > max_sharpness:
+                continue
+        if extract_cfg.get("reject_artifact_mask_overlap", False):
+            artifact_reason = _artifact_overlap_reason(
+                getattr(frame, "artifact_masks", {}) or {},
+                segment_bbox,
+                image.shape,
+                int(extract_cfg.get("artifact_mask_margin_pix", 0)),
+            )
+            if artifact_reason is not None:
+                continue
         max_ellipticity = extract_cfg.get("max_ellipticity")
         if max_ellipticity is not None:
             max_ellipticity = _finite_nonnegative_float(
@@ -234,10 +295,6 @@ def extract_stars(frame: PreprocessedFrame, cfg: dict) -> list[StarCandidate]:
             )
             if float(shape["ellipticity"]) > max_ellipticity:
                 continue
-
-        segment_bbox = _expanded_bbox(
-            xs, ys, image.shape, int(extract_cfg.get("bbox_expand", 0))
-        )
 
         if centroid_method == "weighted_centroid":
             x, y, flux = _weighted_centroid_from_mask(image, seg)

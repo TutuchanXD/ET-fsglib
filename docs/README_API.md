@@ -285,12 +285,15 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 
 实现：
 
-- 有限值掩膜、bias/dark/FPN/flat/bad-pixel 校准链、robust 背景估计和噪声方差估计；
+- 有限值掩膜、12bit ADC clip、saturation guard、bias/dark/FPN/flat/bad-pixel 校准链、robust 背景估计和噪声方差估计；
 - `calib` 由 `build_models(cfg)` 根据 `preprocess.*_path` YAML 配置加载；
+- 默认 guide-detector 配置是 `detector.pixel_size_um=6.5`、`detector.adc_bit_depth=12`、`detector.saturation_value=4095.0`；`preprocess.enable_adc_clip=true` 时，raw 仿真图或观测图中超过 ADC 上限的像素会先被截断；
+- saturated pixels 进入 `PreprocessedFrame.artifact_masks`，默认 `preprocess.enable_saturation_guard=true` 会把这些像素从 `valid_mask` 中移除；
 - `preprocess.background_method` 支持 `median`、`sigma_clip_global` 和 `mesh_median`；`mesh_median` 会输出二维背景图；
 - `preprocess.variance_model` 支持默认 `empirical_robust` 和显式 `poisson_read_noise`，后者使用 gain、read noise、quantization noise 与 cadence-scaled dark current 推导物理方差；
 - `PreprocessedFrame.noise_map` 始终等于 `sqrt(variance_map)`，并保持与 `PreprocessedFrame.image` 相同的图像单位；
-- `PreprocessedFrame.preprocess_meta` 记录校准项是否启用、是否应用、资产路径、形状、无效像素计数、背景 RMS、方差模型和单位转换。
+- `PreprocessedFrame.preprocess_meta` 记录校准项是否启用、是否应用、资产路径、形状、无效像素计数、ADC clip、artifact counts、背景 RMS、方差模型和单位转换；
+- 宇宙线注入属于仿真端职责；`fsglib` 不在运行时生成或注入宇宙线事件，只消费输入图像和 `PreprocessedFrame.artifact_masks` 并执行饱和/伪源防护。真实观测数据通常不会提供宇宙线 mask，因此 PR11 主要依靠 ADC 饱和防护、退化源拒绝、sharpness 限制和后续拟合/匹配残差控制污染；未饱和且形态仍像星的宇宙线命中不保证被 PR11 自动识别。PR11 外部宇宙线数据资产位于 `/home/cxgao/ET/FSG/fsglib-data/cosmic_ray/`，供仿真端后续接入。
 
 ### 6.3 星点提取
 
@@ -310,6 +313,9 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 - `extract.grow_threshold_sigma`
 - `extract.min_area / max_area`
 - `extract.max_ellipticity`
+- `extract.reject_degenerate_sources`
+- `extract.min_fwhm_pix / max_sharpness`
+- `extract.reject_artifact_mask_overlap`
 - `extract.centroid_method`
 - `extract.centroid_window.size`
 - `extract.reject_edge_margin`
@@ -326,7 +332,7 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 - shape 由算法从 candidate pixels 自行计算，不依赖外部 PSF；外部 PSF/ML centroid 留给 PR13；
 - `ellipticity = 1 - sqrt(lambda_min / lambda_max)`，超过 `extract.max_ellipticity` 的候选会被拒绝；
 - `fwhm_pix` 是 major-axis 二阶矩代理量，`sharpness` 是 peak / grown-segment 平均面亮度；
-- 单像素或退化二阶矩候选保留并标记 `shape_degenerate=true`，artifact 策略留给 PR11。
+- 默认 `base.yaml` 会拒绝单像素/退化二阶矩候选、过尖锐候选，以及与 saturation/artifact mask 相交的候选；关闭 `extract.reject_degenerate_sources` 后仍可保留退化候选并标记 `shape_degenerate=true`。
 
 其他：
 

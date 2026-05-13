@@ -1,4 +1,6 @@
 import numpy as np
+from scipy import ndimage
+
 from fsglib.common.types import RawFrame, PreprocessedFrame
 
 
@@ -7,6 +9,8 @@ _ELECTRON_UNITS = {"e", "electron", "electrons"}
 
 _CALIBRATION_ORDER = [
     "finite_mask",
+    "adc_clip",
+    "saturation_guard",
     "bias_subtraction",
     "dark_subtraction",
     "fpn_subtraction",
@@ -19,6 +23,10 @@ _CALIBRATION_ORDER = [
 
 def _preprocess_cfg(cfg: dict) -> dict:
     return cfg.get("preprocess", {})
+
+
+def _detector_cfg(cfg: dict) -> dict:
+    return cfg.get("detector", {})
 
 
 def _calibration_meta(calib: dict, name: str) -> dict:
@@ -122,6 +130,15 @@ def _required_nonnegative_float(value: object, name: str) -> float:
     return _nonnegative_float(value, name)
 
 
+def _nonnegative_int(value: object, name: str, default: int = 0) -> int:
+    if value is None:
+        return default
+    result = int(value)
+    if result < 0:
+        raise ValueError(f"preprocess.{name} must be a non-negative integer")
+    return result
+
+
 def _unit_is_electron(unit: str | None) -> bool:
     if unit is None:
         return False
@@ -148,6 +165,67 @@ def _robust_sigma(vals: np.ndarray) -> float:
     if std > 0.0 and np.isfinite(std):
         return std
     return 0.0
+
+
+def _adc_clip_limits(cfg: dict) -> tuple[bool, float, float, int | None]:
+    preprocess_cfg = _preprocess_cfg(cfg)
+    detector_cfg = _detector_cfg(cfg)
+    enabled = bool(preprocess_cfg.get("enable_adc_clip", True))
+
+    min_value = float(detector_cfg.get("adc_min_value", 0.0))
+    if not np.isfinite(min_value):
+        raise ValueError("detector.adc_min_value must be finite")
+
+    bit_depth_value = detector_cfg.get("adc_bit_depth", 12)
+    bit_depth = None if bit_depth_value is None else int(bit_depth_value)
+    max_value_config = detector_cfg.get("saturation_value")
+    if max_value_config is None:
+        if bit_depth is None or bit_depth <= 0:
+            raise ValueError("detector.adc_bit_depth must be a positive integer")
+        max_value = float((1 << bit_depth) - 1)
+    else:
+        max_value = float(max_value_config)
+        if not np.isfinite(max_value):
+            raise ValueError("detector.saturation_value must be finite")
+
+    if max_value <= min_value:
+        raise ValueError("detector.saturation_value must be greater than detector.adc_min_value")
+    return enabled, min_value, max_value, bit_depth
+
+
+def _apply_adc_clip(
+    image: np.ndarray,
+    valid_mask: np.ndarray,
+    cfg: dict,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    enabled, min_value, max_value, bit_depth = _adc_clip_limits(cfg)
+    finite = valid_mask & np.isfinite(image)
+    saturated_mask = finite & (image >= max_value)
+    clipped_low = finite & (image < min_value)
+    clipped_high = finite & (image > max_value)
+
+    if enabled:
+        clipped = np.asarray(image, dtype=np.float64).copy()
+        clipped[finite] = np.clip(clipped[finite], min_value, max_value)
+    else:
+        clipped = image
+
+    return clipped, saturated_mask, {
+        "enabled": bool(enabled),
+        "min_value": float(min_value),
+        "max_value": float(max_value),
+        "adc_bit_depth": bit_depth,
+        "num_clipped_low_pixels": int(np.count_nonzero(clipped_low)) if enabled else 0,
+        "num_clipped_high_pixels": int(np.count_nonzero(clipped_high)) if enabled else 0,
+        "num_saturated_pixels": int(np.count_nonzero(saturated_mask)),
+    }
+
+
+def _dilate_mask(mask: np.ndarray, radius: int) -> np.ndarray:
+    if radius <= 0 or not np.any(mask):
+        return mask.astype(bool, copy=True)
+    structure = np.ones((2 * radius + 1, 2 * radius + 1), dtype=bool)
+    return ndimage.binary_dilation(mask, structure=structure)
 
 
 def _sigma_clip_values(
@@ -450,14 +528,36 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
     valid_mask = np.isfinite(image)
     image_shape = image.shape
     dark_current_map = None
+    artifact_masks: dict[str, np.ndarray] = {}
 
     image = np.where(valid_mask, image, 0.0)
+    image, saturated_mask, adc_meta = _apply_adc_clip(image, valid_mask, cfg)
+    artifact_masks["saturated"] = saturated_mask
+    saturation_guard_enabled = bool(preprocess_cfg.get("enable_saturation_guard", True))
+    saturation_guard_radius = _nonnegative_int(
+        preprocess_cfg.get("saturation_mask_dilation_pix", 0),
+        "saturation_mask_dilation_pix",
+    )
+    saturation_guard_mask = _dilate_mask(saturated_mask, saturation_guard_radius)
+    artifact_masks["saturation_guard"] = saturation_guard_mask
+    if saturation_guard_enabled:
+        valid_mask &= ~saturation_guard_mask
+
     preprocess_meta = {
         "input_unit": raw.unit,
         "output_unit": raw.unit,
         "raw_image_shape": tuple(image_shape),
         "calibration_order": list(_CALIBRATION_ORDER),
         "calibration": {},
+        "adc_clip": adc_meta,
+        "artifact_counts": {
+            "saturated": int(np.count_nonzero(saturated_mask)),
+            "saturation_guard": int(np.count_nonzero(saturation_guard_mask)),
+        },
+        "artifact_policy": {
+            "saturation_guard_applied": saturation_guard_enabled,
+            "saturation_mask_dilation_pix": saturation_guard_radius,
+        },
     }
 
     if preprocess_cfg.get("enable_bias_subtraction", False):
@@ -637,6 +737,7 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
         valid_mask=valid_mask,
         variance_map=variance_map,
         preprocess_meta=preprocess_meta,
+        artifact_masks=artifact_masks,
     )
 
 

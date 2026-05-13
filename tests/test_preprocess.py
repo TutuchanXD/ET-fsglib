@@ -71,6 +71,8 @@ def test_preprocess_applies_ordered_detector_calibration_chain():
     assert pre.preprocess_meta["input_unit"] == "electron_or_adu"
     assert pre.preprocess_meta["calibration_order"] == [
         "finite_mask",
+        "adc_clip",
+        "saturation_guard",
         "bias_subtraction",
         "dark_subtraction",
         "fpn_subtraction",
@@ -84,6 +86,54 @@ def test_preprocess_applies_ordered_detector_calibration_chain():
         assert "path" in pre.preprocess_meta["calibration"][name]
     assert pre.preprocess_meta["num_bad_pixels"] == 1
     assert pre.preprocess_meta["num_invalid_pixels"] == 1
+
+
+def test_preprocess_adc_clip_clips_to_configured_bit_depth_without_masking():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[-2.0, 4094.25, 4096.0, 62142.0]], dtype=np.float64),
+        time_s=0.0,
+        unit="adu",
+    )
+    cfg = {
+        **_preprocess_cfg(
+            enable_adc_clip=True,
+            enable_saturation_guard=False,
+        ),
+        "detector": {"adc_bit_depth": 12},
+    }
+
+    pre = preprocess_frame(raw, calib={}, cfg=cfg)
+
+    assert np.allclose(pre.image, [[0.0, 4094.25, 4095.0, 4095.0]])
+    assert np.all(pre.valid_mask)
+    assert pre.preprocess_meta["adc_clip"]["enabled"] is True
+    assert pre.preprocess_meta["adc_clip"]["max_value"] == 4095.0
+    assert pre.preprocess_meta["adc_clip"]["num_clipped_high_pixels"] == 2
+    assert pre.preprocess_meta["adc_clip"]["num_clipped_low_pixels"] == 1
+    assert pre.preprocess_meta["artifact_counts"]["saturated"] == 2
+
+
+def test_preprocess_saturation_guard_masks_saturated_pixels_by_default():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[10.0, 4096.0, 5000.0]], dtype=np.float64),
+        time_s=0.0,
+        unit="adu",
+    )
+    cfg = {
+        **_preprocess_cfg(enable_adc_clip=True),
+        "detector": {"adc_bit_depth": 12},
+    }
+
+    pre = preprocess_frame(raw, calib={}, cfg=cfg)
+
+    assert np.allclose(pre.image, [[10.0, 0.0, 0.0]])
+    assert np.array_equal(pre.valid_mask, [[True, False, False]])
+    assert np.array_equal(pre.artifact_masks["saturated"], [[False, True, True]])
+    assert np.array_equal(pre.artifact_masks["saturation_guard"], [[False, True, True]])
+    assert pre.preprocess_meta["artifact_policy"]["saturation_guard_applied"] is True
+    assert pre.preprocess_meta["num_invalid_pixels"] == 2
 
 
 def test_preprocess_raises_when_enabled_calibration_product_is_missing():

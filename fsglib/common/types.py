@@ -33,6 +33,7 @@ class PreprocessedFrame:
     valid_mask: np.ndarray
     variance_map: np.ndarray | float | None = None
     preprocess_meta: dict = field(default_factory=dict)
+    artifact_masks: dict[str, np.ndarray] = field(default_factory=dict)
 
 @dataclass
 class StarCandidate:

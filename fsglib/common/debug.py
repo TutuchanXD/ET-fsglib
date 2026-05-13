@@ -802,6 +802,8 @@ def save_debug_bundle(result: Any, cfg: dict) -> Path | None:
         np.save(bundle_dir / "raw.npy", raw.image)
         np.save(bundle_dir / "preprocessed.npy", preprocessed.image)
         np.save(bundle_dir / "noise_map.npy", preprocessed.noise_map)
+        for name, mask in getattr(preprocessed, "artifact_masks", {}).items():
+            np.save(bundle_dir / f"artifact_mask_{name}.npy", np.asarray(mask, dtype=bool))
 
     _write_json(bundle_dir / "truth_stars.json", truth_payload)
     _write_json(bundle_dir / "reference_stars.json", reference_payload)
