@@ -276,10 +276,13 @@ default `base.yaml` paths use PR9 fake 2049-pixel no-op assets; loading those
 assets emits a `RuntimeWarning` so precision runs do not silently use fake
 calibration.
 
-PR11 applies ADC clipping before detector calibration. With the default 12-bit
-guide-detector settings, raw simulation or observed pixels above `4095` DN are
-clipped to `4095`, negative finite pixels are clipped to `0`, and pixels at the
-saturation threshold are recorded in `PreprocessedFrame.artifact_masks`. When
+PR11 applies ADC clipping before detector calibration as an input guard. The
+authoritative detector ADC saturation simulation belongs in Photsim7; `fsglib`
+keeps this guard so real or externally simulated inputs are bounded and
+saturated pixels are tracked consistently. With the default 12-bit
+guide-detector settings, raw pixels above `4095` DN are clipped to `4095`,
+negative finite pixels are clipped to `0`, and pixels at the saturation
+threshold are recorded in `PreprocessedFrame.artifact_masks`. When
 `preprocess.enable_saturation_guard=true`, the saturation guard mask is removed
 from `valid_mask` before background and noise estimation. `preprocess_meta`
 records `adc_clip`, `artifact_counts`, and `artifact_policy` for audit.
@@ -295,10 +298,11 @@ exist, and downstream fit/match residual checks. A cosmic ray that hits a real
 star but remains unsaturated and morphologically star-like is not guaranteed to
 be rejected by PR11.
 
-The PR11 external data assets prepared for simulation-side use are:
-`/home/cxgao/ET/FSG/fsglib-data/cosmic_ray/pr11_event_library_10um/event_library_10um.npz`
+The external cosmic-ray data assets prepared for simulation-side use are now
+owned by Photsim7-data:
+`/home/cxgao/ET/Photsim7-data/cosmic_ray/dark_test_10um/event_library_10um.npz`
 and
-`/home/cxgao/ET/FSG/fsglib-data/cosmic_ray/pr11_event_library_6p5um/event_library_6p5um.npz`.
+`/home/cxgao/ET/Photsim7-data/cosmic_ray/guide_6p5um/event_library_6p5um.npz`.
 The source asset is the 10um measured dark-test event library; the 6.5um asset
 is a guide-detector derivative stored outside this source repository.
 
