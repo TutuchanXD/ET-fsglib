@@ -6,6 +6,8 @@ Source planning note: the local Chinese DOCX roadmap under `plan/` (planning mat
 
 Date: 2026-05-11
 
+Status snapshot updated: 2026-05-18
+
 Goal: move ET-fsglib from an algorithm validation and workflow test library toward an auditable, regressible, and extensible high-precision guide-star algorithm chain.
 
 ## Executive Summary
@@ -32,6 +34,38 @@ The guide-star error chain crosses module boundaries. Preprocessing noise affect
 | M2 | Image, geometry, catalog, and LIS foundation | PR6-PR18 | Build lost-in-space foundations while advancing preprocessing, centroiding, optics, and ephemeris. |
 | M3 | Attitude precision and validation closure | PR19-PR22 | Add covariance-weighted attitude solving, robust outlier rejection, error budget, Monte Carlo, and ET validation scenarios. |
 | M4 | Performance and maintainability | PR23-PR24 | Add runtime budgets, typed config, structured debug artifacts, and design documentation. |
+
+## Current Status Snapshot
+
+Status checked against merged PRs and open issues on 2026-05-18.
+
+| Roadmap PR | Status | Evidence and remaining work |
+| --- | --- | --- |
+| PR0 | Completed | Temporary issue #22 is closed. |
+| PR1 | Completed | Merged as GitHub PR #66. |
+| PR2 | Completed | Merged as GitHub PR #70. |
+| PR3 | Completed | Merged as GitHub PR #73. Runtime-budget generalization remains PR23/#54. |
+| PR4 | Completed with follow-ups | Merged as GitHub PR #76. Covariance-derived gates remain in PR19/#31; projector-backed expansion remains #75. |
+| PR5 | Completed | Merged as GitHub PR #78. |
+| PR6 | Completed | Merged as GitHub PR #71. |
+| PR7 | Completed | Merged as GitHub PR #79. |
+| PR8 | Completed | Merged as GitHub PR #80. |
+| PR9 | Completed | Merged as GitHub PR #82. |
+| PR10 | Completed with follow-ups | Merged as GitHub PR #85. Real detector noise assets and flat-field uncertainty remain #83/#84. |
+| PR11 | Completed with follow-up | Merged as GitHub PR #88. Future unmasked cosmic-ray detection remains #87. |
+| PR12 | Completed | Merged as GitHub PR #86. |
+| PR13 | Next recommended PR | Open issues #38, #39, and #40; blocks PR19. |
+| PR14 | Completed | Merged as GitHub PR #72. |
+| PR15 | Completed with follow-up | Merged as GitHub PR #74. Broader multi-detector validation remains #57/PR22. |
+| PR16 | Pending | Open issue #43. |
+| PR17 | Completed | Merged as GitHub PR #77. |
+| PR18 | Completed | Merged as GitHub PR #81 for the generic HEALPix provider/cache/provenance path. |
+| PR19 | Pending, blocked by PR13 | Open issues #47, #62, and PR13-linked #39/#31. |
+| PR20 | Pending | Open issue #48. Ambiguity issue #63 is already closed by PR4 work. |
+| PR21 | Pending | Open issue #50. |
+| PR22 | Pending | Open issues #51, #52, #53, #57, and #65. |
+| PR23 | Partially covered, not complete | Local-pyramid timing/cache work exists from PR3/#73; full stage profiler and CI budgets remain #54. |
+| PR24 | Partially covered, not complete | Incremental docs/debug work exists, but YAML audit, typed config, structured artifacts, logging policy, and design docs remain #69/#55/#58/#59/#60. |
 
 ## Current Issue Map
 
@@ -125,7 +159,7 @@ PR1  -> PR24
 
 ## PR Execution Cards
 
-### PR0. housekeeping: close temporary test issue #22
+### PR0. housekeeping: close temporary test issue #22 (completed: #22 closed)
 
 | Field | Value |
 | --- | --- |
@@ -140,7 +174,7 @@ Scope: close #22 only. Do not modify code and do not include this in a release m
 
 Acceptance: #22 is closed and no PR is produced.
 
-### PR1. pipeline: route tracking through configured matcher
+### PR1. pipeline: route tracking through configured matcher (completed: GitHub PR #66)
 
 | Field | Value |
 | --- | --- |
@@ -171,7 +205,7 @@ Acceptance:
 - The previous predicted-position behavior does not regress.
 - Debug payloads explain the requested and selected strategy.
 
-### PR2. match: add local-pyramid diagnostics and independence tests
+### PR2. match: add local-pyramid diagnostics and independence tests (completed: GitHub PR #70)
 
 | Field | Value |
 | --- | --- |
@@ -197,7 +231,7 @@ Acceptance:
 - A perturbed case proves independent pyramid recovery, or the limitation is explicitly recorded.
 - The existing local-pyramid PR can be readied or kept draft based on evidence.
 
-### PR3. perf: cache local-pyramid pair index and angle queries
+### PR3. perf: cache local-pyramid pair index and angle queries (completed: GitHub PR #73)
 
 | Field | Value |
 | --- | --- |
@@ -223,7 +257,7 @@ Acceptance:
 - Cached and uncached results are identical.
 - Default local-pyramid runtime has a measurable decrease.
 
-### PR4. match: harden local-pyramid gates for reacquire
+### PR4. match: harden local-pyramid gates for reacquire (completed: GitHub PR #76; follow-ups remain)
 
 | Field | Value |
 | --- | --- |
@@ -250,7 +284,7 @@ Acceptance:
 - Mixed-detector coherent offsets are not silently accepted.
 - Bad seeds cannot produce high-confidence large-scale mismatches.
 
-### PR5. pipeline: introduce explicit guiding mode state machine
+### PR5. pipeline: introduce explicit guiding mode state machine (completed: GitHub PR #78)
 
 | Field | Value |
 | --- | --- |
@@ -276,7 +310,7 @@ Acceptance:
 - Sequence results can audit requested mode, selected matcher, and failure reason for every frame.
 - Lost-in-space can be reserved as an interface even if it initially returns not implemented.
 
-### PR6. lis: build offline all-sky guide-star index
+### PR6. lis: build offline all-sky guide-star index (completed: GitHub PR #71)
 
 | Field | Value |
 | --- | --- |
@@ -301,7 +335,7 @@ Acceptance:
 - A small fixture verifies pair counts and sorted angles exactly.
 - The index load API is usable by the matcher.
 
-### PR7. lis: implement all-sky lost-in-space matcher
+### PR7. lis: implement all-sky lost-in-space matcher (completed: GitHub PR #79)
 
 | Field | Value |
 | --- | --- |
@@ -328,7 +362,7 @@ Acceptance:
 - False-positive rate has an explicit test and threshold.
 - A valid solution can be returned without prior attitude.
 
-### PR8. pipeline: integrate lost-in-space recovery mode
+### PR8. pipeline: integrate lost-in-space recovery mode (completed: GitHub PR #80)
 
 | Field | Value |
 | --- | --- |
@@ -353,7 +387,7 @@ Acceptance:
 - End-to-end test covers tracking failure, reacquire failure, LIS success, and return to tracking.
 - LIS failure does not pollute track state.
 
-### PR9. preprocess: implement detector calibration chain
+### PR9. preprocess: implement detector calibration chain (completed: GitHub PR #82)
 
 | Field | Value |
 | --- | --- |
@@ -380,7 +414,7 @@ Acceptance:
 - Missing calibration data preserves backward-compatible behavior.
 - Preprocess metadata records correction provenance.
 
-### PR10. preprocess: add robust background and noise variance model
+### PR10. preprocess: add robust background and noise variance model (completed: GitHub PR #85; follow-ups remain)
 
 | Field | Value |
 | --- | --- |
@@ -406,7 +440,7 @@ Acceptance:
 - Poisson and read-noise variance match analytical values.
 - Extraction SNR has a clear definition.
 
-### PR11. preprocess: reject detector artifacts
+### PR11. preprocess: reject detector artifacts (completed: GitHub PR #88; follow-up remains)
 
 | Field | Value |
 | --- | --- |
@@ -433,7 +467,7 @@ Acceptance:
 - Saturated and nonlinear stars are flagged and excluded from high-precision attitude by default.
 - Residual-image and crosstalk fixtures are covered.
 
-### PR12. extract: implement hysteresis segmentation and PSF shape filters
+### PR12. extract: implement hysteresis segmentation and PSF shape filters (completed: GitHub PR #86)
 
 | Field | Value |
 | --- | --- |
@@ -460,7 +494,7 @@ Acceptance:
 - Elongated, trailed, and cosmic-ray-like sources are classified by shape filters.
 - Centroid bias decreases on synthetic PSF fixtures.
 
-### PR13. extract: add precision centroiding with covariance and deblending
+### PR13. extract: add precision centroiding with covariance and deblending (next recommended PR)
 
 | Field | Value |
 | --- | --- |
@@ -486,7 +520,7 @@ Acceptance:
 - Output covariance is comparable to Monte Carlo scatter.
 - Blended close sources are not silently treated as high-quality single stars.
 
-### PR14. optics: lock camera-frame conventions with round-trip and golden quaternion tests
+### PR14. optics: lock camera-frame conventions with round-trip and golden quaternion tests (completed: GitHub PR #72)
 
 | Field | Value |
 | --- | --- |
@@ -512,7 +546,7 @@ Acceptance:
 - Quaternion and DCM direction are unambiguous.
 - Later PRs can rely on these golden tests.
 
-### PR15. optics: replace body-model proxy with calibrated exact focal-plane adapter
+### PR15. optics: replace body-model proxy with calibrated exact focal-plane adapter (completed: GitHub PR #74; follow-up remains)
 
 | Field | Value |
 | --- | --- |
@@ -564,7 +598,7 @@ Acceptance:
 - A synthetic angular-rate plus rolling-shutter case shows measurable before/after residual change.
 - Global-shutter midpoint behavior remains compatible.
 
-### PR17. ephemeris: apply Gaia epoch propagation and bandpass weighting
+### PR17. ephemeris: apply Gaia epoch propagation and bandpass weighting (completed: GitHub PR #77)
 
 | Field | Value |
 | --- | --- |
@@ -590,7 +624,7 @@ Acceptance:
 - Bandpass weight is auditable.
 - Reference ranking no longer depends only on Gaia G.
 
-### PR18. catalog: cache Gaia region queries and expose catalog/geometry provenance
+### PR18. catalog: cache Gaia region queries and expose catalog/geometry provenance (completed: GitHub PR #81)
 
 | Field | Value |
 | --- | --- |
@@ -724,7 +758,7 @@ Acceptance:
 - TE, HSFE, and LSFE each have distinct metrics.
 - False-match validation checks catalog-ID correctness, not only match count.
 
-### PR23. perf: add runtime profiler and CI performance budgets by stage
+### PR23. perf: add runtime profiler and CI performance budgets by stage (partially covered, not complete)
 
 | Field | Value |
 | --- | --- |
@@ -751,7 +785,7 @@ Acceptance:
 - Local pyramid cache hits are visible.
 - CI can catch order-of-magnitude regressions.
 
-### PR24. config/docs/debug: typed config schema and structured artifacts
+### PR24. config/docs/debug: typed config schema and structured artifacts (partially covered, not complete)
 
 | Field | Value |
 | --- | --- |
