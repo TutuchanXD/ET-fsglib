@@ -175,6 +175,26 @@ def test_preprocess_reports_adc_bit_depth_when_derived_max_is_invalid():
         preprocess_frame(raw, calib={}, cfg=cfg)
 
 
+@pytest.mark.parametrize("bit_depth", [0, -1, 12.5, np.nan, "twelve", True])
+def test_preprocess_rejects_invalid_adc_bit_depth(bit_depth):
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[1.0]], dtype=np.float64),
+        time_s=0.0,
+        unit="adu",
+    )
+    cfg = {
+        **_preprocess_cfg(enable_adc_clip=True),
+        "detector": {
+            "adc_bit_depth": bit_depth,
+            "saturation_value": None,
+        },
+    }
+
+    with pytest.raises(ValueError, match="detector.adc_bit_depth"):
+        preprocess_frame(raw, calib={}, cfg=cfg)
+
+
 def test_preprocess_raises_when_enabled_calibration_product_is_missing():
     raw = RawFrame(
         detector_id=0,

@@ -145,6 +145,30 @@ def _nonnegative_int(value: object, name: str, default: int = 0) -> int:
     return result
 
 
+def _detector_finite_float(value: object, name: str) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"detector.{name} must be finite") from exc
+    if not np.isfinite(result):
+        raise ValueError(f"detector.{name} must be finite")
+    return result
+
+
+def _detector_positive_int(value: object, name: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"detector.{name} must be a positive integer")
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"detector.{name} must be a positive integer") from exc
+    if not np.isfinite(numeric) or not numeric.is_integer() or numeric <= 0:
+        raise ValueError(f"detector.{name} must be a positive integer")
+    return int(numeric)
+
+
 def _unit_is_electron(unit: str | None) -> bool:
     if unit is None:
         return False
@@ -178,21 +202,17 @@ def _adc_clip_limits(cfg: dict) -> tuple[bool, float, float, int | None]:
     detector_cfg = _detector_cfg(cfg)
     enabled = bool(preprocess_cfg.get("enable_adc_clip", True))
 
-    min_value = float(detector_cfg.get("adc_min_value", 0.0))
-    if not np.isfinite(min_value):
-        raise ValueError("detector.adc_min_value must be finite")
+    min_value = _detector_finite_float(detector_cfg.get("adc_min_value", 0.0), "adc_min_value")
 
     bit_depth_value = detector_cfg.get("adc_bit_depth", 12)
-    bit_depth = None if bit_depth_value is None else int(bit_depth_value)
+    bit_depth = _detector_positive_int(bit_depth_value, "adc_bit_depth")
     max_value_config = detector_cfg.get("saturation_value")
     if max_value_config is None:
         if bit_depth is None or bit_depth <= 0:
             raise ValueError("detector.adc_bit_depth must be a positive integer")
         max_value = float((1 << bit_depth) - 1)
     else:
-        max_value = float(max_value_config)
-        if not np.isfinite(max_value):
-            raise ValueError("detector.saturation_value must be finite")
+        max_value = _detector_finite_float(max_value_config, "saturation_value")
 
     if max_value <= min_value:
         if max_value_config is None:
