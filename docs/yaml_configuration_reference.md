@@ -183,8 +183,10 @@ them from truth stars for the `sky_patch_linearized` layout model.
 | `detector.num_detectors` | int | `4` | declared | Detector count metadata. |
 | `detector.image_height` | int | `2049` | declared | Image height metadata for the default 2049-pixel guide simulation frames. |
 | `detector.image_width` | int | `2049` | declared | Image width metadata for the default 2049-pixel guide simulation frames. |
-| `detector.pixel_size_um` | float or null | `null` | declared | Pixel size metadata in microns. |
-| `detector.saturation_value` | float or null | `null` | reserved | Saturation handling is not implemented in the current extractor. |
+| `detector.pixel_size_um` | float | `6.5` | active metadata | Default guide-detector pixel pitch in microns. |
+| `detector.adc_bit_depth` | int | `12` | active | Digital ADC bit depth used to derive the default maximum DN when `detector.saturation_value` is null. |
+| `detector.adc_min_value` | float | `0.0` | active | Lower digital clip bound used when `preprocess.enable_adc_clip=true`. |
+| `detector.saturation_value` | float | `4095.0` | active | Upper digital clip bound and saturation mask threshold for the default 12-bit guide-detector images. |
 | `detector.bad_pixel_map` | path string or null | `null` | reserved compatibility key | Bad-pixel masking is implemented through `preprocess.enable_bad_pixel_mask` and `preprocess.bad_pixel_mask_path`; this detector-level key is not consumed yet. |
 
 ## `layout`
@@ -239,6 +241,9 @@ Each `layout.detectors[]` entry supports:
 | `preprocess.bad_pixel_mask_path` | path string or null | local fake 2049 asset | active with bad-pixel mask | `.npy` or `.npz` 2-D bool or numeric 0/1 mask matching the raw image shape. |
 | `preprocess.enable_fpn_subtraction` | bool | `true` | active | If true, subtracts an additive fixed-pattern residual map before flat-field correction. `base.yaml` points to a no-op 2049-pixel PR9 fake asset. |
 | `preprocess.fpn_residual_map_path` | path string or null | local fake 2049 asset | active with FPN subtraction | `.npy` or `.npz` 2-D finite numeric residual map matching the raw image shape. |
+| `preprocess.enable_adc_clip` | bool | `true` | active | If true, clips finite raw input pixels into `[detector.adc_min_value, detector.saturation_value]` before calibration/background estimation. |
+| `preprocess.enable_saturation_guard` | bool | `true` | active | If true, removes saturated pixels from `valid_mask` and records `artifact_masks["saturation_guard"]`. |
+| `preprocess.saturation_mask_dilation_pix` | int | `0` | active | Optional binary dilation radius applied to saturated pixels before masking. |
 | `preprocess.background_method` | string | `sigma_clip_global` | active | Supported values: `median`, `sigma_clip_global`, and `mesh_median`. `mesh_median` writes a 2-D background map. |
 | `preprocess.sigma_clip_k` | float | `3.0` | active | Rejection threshold for sigma-clipped global and mesh background/noise estimates. |
 | `preprocess.sigma_clip_max_iters` | int | `3` | active | Maximum robust sigma-clipping iterations for background/noise estimation. |
@@ -271,6 +276,36 @@ default `base.yaml` paths use PR9 fake 2049-pixel no-op assets; loading those
 assets emits a `RuntimeWarning` so precision runs do not silently use fake
 calibration.
 
+PR11 applies ADC clipping before detector calibration as an input guard. The
+authoritative detector ADC saturation simulation belongs in Photsim7; `fsglib`
+keeps this guard so real or externally simulated inputs are bounded and
+saturated pixels are tracked consistently. With the default 12-bit
+guide-detector settings, raw pixels above `4095` DN are clipped to `4095`,
+negative finite pixels are clipped to `0`, and pixels at the saturation
+threshold are recorded in `PreprocessedFrame.artifact_masks`. When
+`preprocess.enable_saturation_guard=true`, the saturation guard mask is removed
+from `valid_mask` before background and noise estimation. `preprocess_meta`
+records `adc_clip`, `artifact_counts`, and `artifact_policy` for audit.
+
+Cosmic-ray injection is intentionally a simulation-side concern, not an
+`fsglib` runtime preprocessing step. `fsglib` consumes the resulting image and
+artifact masks through `PreprocessedFrame.artifact_masks`; simulation pipelines
+should own event-rate sampling, stamp placement, rotation, resampling, and ADC
+ordering. Real observation frames are not expected to provide cosmic-ray masks,
+so PR11 controls cosmic-ray contamination only through ADC saturation guards,
+degenerate-source rejection, sharpness limits, artifact-mask overlap when masks
+exist, and downstream fit/match residual checks. A cosmic ray that hits a real
+star but remains unsaturated and morphologically star-like is not guaranteed to
+be rejected by PR11.
+
+The external cosmic-ray data assets prepared for simulation-side use are now
+owned by Photsim7-data:
+`/home/cxgao/ET/Photsim7-data/cosmic_ray/dark_test_10um/event_library_10um.npz`
+and
+`/home/cxgao/ET/Photsim7-data/cosmic_ray/guide_6p5um/event_library_6p5um.npz`.
+The source asset is the 10um measured dark-test event library; the 6.5um asset
+is a guide-detector derivative stored outside this source repository.
+
 ## `extract`
 
 | Key | Type | Default | Status | Description |
@@ -286,6 +321,11 @@ calibration.
 | `extract.bbox_expand` | int | `2` | active | Expands the stored segmentation bounding box for weighted centroids. |
 | `extract.reject_edge_margin` | int | `3` | active | Rejects candidates whose centroid window touches an image edge within this margin. |
 | `extract.max_ellipticity` | float | `0.8` | active | Rejects candidates whose measured second-moment ellipticity exceeds this value. |
+| `extract.reject_degenerate_sources` | bool | `true` | active | Rejects single-pixel or second-moment-degenerate candidates, which are common hot-pixel/cosmic-ray artifacts. |
+| `extract.min_fwhm_pix` | float or null | `null` | active | Optional lower bound on measured second-moment FWHM. Null disables this filter. |
+| `extract.max_sharpness` | float or null | `10.0` | active | Optional upper bound on peak divided by grown-segment mean surface brightness. |
+| `extract.reject_artifact_mask_overlap` | bool | `true` | active | Rejects candidates whose segmentation bbox overlaps any `PreprocessedFrame.artifact_masks` entry after optional margin expansion. |
+| `extract.artifact_mask_margin_pix` | int | `2` | active | Pixel margin used when checking candidate bbox overlap with artifact masks. |
 
 Extraction uses the SNR image for segmentation. Seed and grow masks both use
 strict `>` threshold comparisons, and grow pixels must be connected to at least
@@ -306,11 +346,12 @@ an external PSF model. `StarCandidate.shape` includes `sigma_major_pix`,
 `roundness`, and `shape_degenerate`. Ellipticity is defined as
 `1 - sqrt(lambda_min / lambda_max)` from the second-moment eigenvalues.
 `fwhm_pix` is the major-axis second-moment proxy `2.3548 * sigma_major_pix`;
-`sharpness` is peak divided by mean grown-segment surface brightness. Degenerate
-single-pixel sources are retained with `ellipticity=0.0` and
-`shape_degenerate=true`; artifact policy for such sources is deferred to PR11.
-Accepted candidates also copy key shape values into `StarCandidate.flags` so they
-propagate through existing `ObservedStar.flags` paths.
+`sharpness` is peak divided by mean grown-segment surface brightness. PR11 makes
+artifact filtering configurable: the default `base.yaml` rejects degenerate
+single-pixel sources, overly sharp candidates, and candidates overlapping
+preprocess artifact masks such as saturation guards. Accepted candidates also
+copy key shape values into `StarCandidate.flags` so they propagate through
+existing `ObservedStar.flags` paths.
 
 ### `extract.bias_correction`
 
@@ -630,7 +671,7 @@ magnitude when available, and the `weight_source`/`flux_weight` used for
 | Key | Type | Default | Status | Description |
 |-----|------|---------|--------|-------------|
 | `logging.level` | string | `INFO` | declared | No logging subsystem currently reads this key. |
-| `logging.save_intermediate_arrays` | bool | `true` | active | Controls `raw.npy`, `preprocessed.npy`, and `noise_map.npy` in debug bundles. |
+| `logging.save_intermediate_arrays` | bool | `true` | active | Controls `raw.npy`, `preprocessed.npy`, `noise_map.npy`, and `artifact_mask_*.npy` in debug bundles. |
 | `logging.save_source_catalog` | bool | `true` | declared | Reference-star JSON is currently always written when a debug bundle is saved. |
 | `logging.save_match_result` | bool | `true` | declared | Match JSON is currently always written when a debug bundle is saved. |
 

@@ -7,7 +7,11 @@ from fsglib.common.types import PreprocessedFrame
 from fsglib.extract.pipeline import extract_stars
 
 
-def _frame_from_image(image: np.ndarray, noise_level: float = 1.0) -> PreprocessedFrame:
+def _frame_from_image(
+    image: np.ndarray,
+    noise_level: float = 1.0,
+    artifact_masks: dict[str, np.ndarray] | None = None,
+) -> PreprocessedFrame:
     image = np.asarray(image, dtype=np.float64)
     return PreprocessedFrame(
         detector_id=0,
@@ -16,6 +20,7 @@ def _frame_from_image(image: np.ndarray, noise_level: float = 1.0) -> Preprocess
         noise_map=np.full_like(image, noise_level, dtype=np.float64),
         valid_mask=np.isfinite(image),
         preprocess_meta={},
+        artifact_masks={} if artifact_masks is None else artifact_masks,
     )
 
 
@@ -181,6 +186,65 @@ def test_extract_stars_keeps_single_pixel_degenerate_shape():
     assert candidates[0].shape["shape_degenerate"] is True
     assert candidates[0].shape["ellipticity"] == 0.0
     assert candidates[0].flags["shape_filter_passed"] is True
+
+
+def test_extract_stars_rejects_degenerate_sources_when_configured():
+    image = np.zeros((5, 5), dtype=np.float64)
+    image[2, 2] = 10.0
+    cfg = _deep_update(
+        _extract_cfg("weighted_centroid"),
+        {"extract": {"reject_degenerate_sources": True}},
+    )
+
+    candidates = extract_stars(_frame_from_image(image), cfg=cfg)
+
+    assert candidates == []
+
+
+def test_extract_stars_rejects_candidates_overlapping_artifact_masks():
+    image = np.zeros((5, 5), dtype=np.float64)
+    image[2, 2] = 10.0
+    image[2, 3] = 4.0
+    artifact = np.zeros_like(image, dtype=bool)
+    artifact[2, 2] = True
+    cfg = _deep_update(
+        _extract_cfg("weighted_centroid"),
+        {
+            "extract": {
+                "reject_artifact_mask_overlap": True,
+                "artifact_mask_margin_pix": 0,
+            }
+        },
+    )
+
+    candidates = extract_stars(
+        _frame_from_image(image, artifact_masks={"saturated": artifact}),
+        cfg=cfg,
+    )
+
+    assert candidates == []
+
+
+@pytest.mark.parametrize("margin", [-1, 1.9, "bad"])
+def test_extract_stars_rejects_invalid_artifact_mask_margin(margin):
+    image = np.zeros((5, 5), dtype=np.float64)
+    image[2, 2] = 10.0
+    artifact = np.zeros_like(image, dtype=bool)
+    cfg = _deep_update(
+        _extract_cfg("weighted_centroid"),
+        {
+            "extract": {
+                "reject_artifact_mask_overlap": True,
+                "artifact_mask_margin_pix": margin,
+            }
+        },
+    )
+
+    with pytest.raises(ValueError, match="extract.artifact_mask_margin_pix"):
+        extract_stars(
+            _frame_from_image(image, artifact_masks={"saturated": artifact}),
+            cfg=cfg,
+        )
 
 
 def test_extract_stars_applies_bias_correction_from_profile(tmp_path):

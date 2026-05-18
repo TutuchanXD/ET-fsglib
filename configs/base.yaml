@@ -19,8 +19,10 @@ detector:
   num_detectors: 4
   image_height: 2049
   image_width: 2049
-  pixel_size_um: null
-  saturation_value: null
+  pixel_size_um: 6.5
+  adc_bit_depth: 12
+  adc_min_value: 0.0
+  saturation_value: 4095.0
   bad_pixel_map: null
 
 psf:
@@ -37,6 +39,9 @@ preprocess:
   bad_pixel_mask_path: /home/cxgao/ET/FSG/fsglib-data/calibration/pr09_fake/2049x2049/bad_pixel_mask.npz
   enable_fpn_subtraction: true
   fpn_residual_map_path: /home/cxgao/ET/FSG/fsglib-data/calibration/pr09_fake/2049x2049/fpn_residual_map.npz
+  enable_adc_clip: true
+  enable_saturation_guard: true
+  saturation_mask_dilation_pix: 0
   enable_background_subtraction: true
   background_method: sigma_clip_global
   sigma_clip_k: 3.0
@@ -62,6 +67,11 @@ extract:
   bbox_expand: 2
   reject_edge_margin: 3
   max_ellipticity: 0.8
+  reject_degenerate_sources: true
+  min_fwhm_pix: null
+  max_sharpness: 10.0
+  reject_artifact_mask_overlap: true
+  artifact_mask_margin_pix: 2
   bias_correction:
     enabled: false
     profile: null
