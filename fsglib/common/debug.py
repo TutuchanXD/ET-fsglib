@@ -298,6 +298,10 @@ def _build_analysis_payload(result: Any, dataset_ctx: Any | None) -> dict[str, A
             "active_detector_ids": list(solution.active_detector_ids),
             "solver_iterations": int(solution.solver_iterations),
             "q_ib": _to_builtin(solution.q_ib),
+            "covariance_rad2": _to_builtin(solution.covariance_rad2),
+            "sigma_non_roll_arcsec": _safe_float(solution.sigma_non_roll_arcsec),
+            "sigma_roll_arcsec": _safe_float(solution.sigma_roll_arcsec),
+            "attitude_condition_number": _safe_float(solution.attitude_condition_number),
             "quality": _to_builtin(solution.quality),
         }
 
@@ -657,6 +661,10 @@ def _build_solution_payload(result: Any) -> dict[str, Any]:
         "degraded_level": solution.degraded_level,
         "active_detector_ids": solution.active_detector_ids,
         "solver_iterations": solution.solver_iterations,
+        "covariance_rad2": _to_builtin(solution.covariance_rad2),
+        "sigma_non_roll_arcsec": _safe_float(solution.sigma_non_roll_arcsec),
+        "sigma_roll_arcsec": _safe_float(solution.sigma_roll_arcsec),
+        "attitude_condition_number": _safe_float(solution.attitude_condition_number),
         "quality": solution.quality,
         "timings_s": meta.get("timings_s"),
     }
@@ -737,6 +745,10 @@ def _write_bundle_readme(bundle_dir: Path, result: Any, analysis: dict[str, Any]
         "- `degraded_level`: 当前解算是否处于降级模式。",
         "- `active_detector_ids`: 参与当前解算的探测器编号列表。",
         "- `solver_iterations`: 当前求解器迭代次数。",
+        "- `covariance_rad2`: 小角姿态 covariance，单位 rad^2；不可用时为 null。",
+        "- `sigma_non_roll_arcsec`: 光轴指向二维 1-sigma 不确定度。",
+        "- `sigma_roll_arcsec`: 绕光轴滚转 1-sigma 不确定度。",
+        "- `attitude_condition_number`: 姿态 covariance normal matrix 条件数。",
         "- `quality`: 姿态解算质量摘要，例如输入星数、使用星数、残差门限。",
         "- `timings_s`: 各阶段耗时统计，单位秒。",
         "- `matching.debug.mean_residual_pix`: 匹配阶段中，参考预测像点到观测质心的平均像面残差。",
