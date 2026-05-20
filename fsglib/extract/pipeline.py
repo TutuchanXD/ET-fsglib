@@ -175,19 +175,23 @@ def _apply_centroid_covariance_floor(cov: np.ndarray, min_sigma_pix: float) -> n
     return eigvecs @ np.diag(eigvals) @ eigvecs.T
 
 
-def _centroid_from_mask(
-    image: np.ndarray,
-    variance: np.ndarray,
-    mask: np.ndarray,
+def _centroid_from_values(
+    signal: np.ndarray,
+    noise_var: np.ndarray,
+    xs: np.ndarray,
+    ys: np.ndarray,
     *,
     min_sigma_pix: float,
-    kernel: np.ndarray | None = None,
+    kernel_values: np.ndarray | None = None,
 ) -> tuple[float, float, float, np.ndarray]:
-    signal = np.asarray(image[mask], dtype=np.float64)
-    if kernel is None:
+    signal = np.asarray(signal, dtype=np.float64)
+    noise_var = np.asarray(noise_var, dtype=np.float64)
+    xs = np.asarray(xs, dtype=np.float64)
+    ys = np.asarray(ys, dtype=np.float64)
+    if kernel_values is None:
         kernel_values = np.ones_like(signal, dtype=np.float64)
     else:
-        kernel_values = np.asarray(kernel[mask], dtype=np.float64)
+        kernel_values = np.asarray(kernel_values, dtype=np.float64)
     weights = signal * kernel_values
     flux = float(np.sum(weights))
     if flux <= 0.0 or not np.isfinite(flux):
@@ -195,12 +199,10 @@ def _centroid_from_mask(
             np.full((2, 2), np.nan, dtype=np.float64),
             min_sigma_pix,
         )
-    ys, xs = np.where(mask)
     x = float(np.sum(xs * weights) / flux)
     y = float(np.sum(ys * weights) / flux)
-    noise_var = np.asarray(variance[mask], dtype=np.float64)
-    dx_dI = kernel_values * (xs.astype(np.float64) - x) / flux
-    dy_dI = kernel_values * (ys.astype(np.float64) - y) / flux
+    dx_dI = kernel_values * (xs - x) / flux
+    dy_dI = kernel_values * (ys - y) / flux
     cov = np.array(
         [
             [np.sum(noise_var * dx_dI * dx_dI), np.sum(noise_var * dx_dI * dy_dI)],
@@ -209,6 +211,26 @@ def _centroid_from_mask(
         dtype=np.float64,
     )
     return x, y, flux, _apply_centroid_covariance_floor(cov, min_sigma_pix)
+
+
+def _centroid_from_mask(
+    image: np.ndarray,
+    variance: np.ndarray,
+    mask: np.ndarray,
+    *,
+    min_sigma_pix: float,
+    kernel: np.ndarray | None = None,
+) -> tuple[float, float, float, np.ndarray]:
+    ys, xs = np.where(mask)
+    kernel_values = None if kernel is None else kernel[mask]
+    return _centroid_from_values(
+        image[mask],
+        variance[mask],
+        xs,
+        ys,
+        min_sigma_pix=min_sigma_pix,
+        kernel_values=kernel_values,
+    )
 
 
 def _weighted_centroid_from_mask(
@@ -234,12 +256,14 @@ def _first_moment_in_bbox(
     min_sigma_pix: float,
 ) -> tuple[float, float, float, np.ndarray]:
     x0, y0, x1, y1 = bbox
-    mask = np.zeros_like(image, dtype=bool)
-    mask[y0 : y1 + 1, x0 : x1 + 1] = True
-    return _centroid_from_mask(
-        image,
-        variance,
-        mask,
+    window = np.asarray(image[y0 : y1 + 1, x0 : x1 + 1], dtype=np.float64)
+    variance_window = np.asarray(variance[y0 : y1 + 1, x0 : x1 + 1], dtype=np.float64)
+    ys, xs = np.indices(window.shape, dtype=np.float64)
+    return _centroid_from_values(
+        window.ravel(),
+        variance_window.ravel(),
+        (x0 + xs).ravel(),
+        (y0 + ys).ravel(),
         min_sigma_pix=min_sigma_pix,
     )
 
@@ -399,9 +423,9 @@ def _local_peak_summary(
     image: np.ndarray,
     seg: np.ndarray,
     snr_map: np.ndarray,
+    local_max: np.ndarray,
     threshold_sigma: float,
 ) -> dict:
-    local_max = image == ndimage.maximum_filter(image, size=3, mode="nearest")
     peak_mask = seg & local_max & (snr_map > threshold_sigma)
     labeled, num = ndimage.label(peak_mask, structure=np.ones((3, 3), dtype=bool))
     peaks = []
@@ -440,6 +464,7 @@ def extract_stars(frame: PreprocessedFrame, cfg: dict) -> list[StarCandidate]:
     blend_cfg = _blend_config(cfg)
 
     snr_map = np.where(mask, image / np.maximum(noise, 1e-6), 0.0)
+    local_max = image == ndimage.maximum_filter(image, size=3, mode="nearest")
 
     seed_th = _finite_nonnegative_float(
         extract_cfg["seed_threshold_sigma"],
@@ -486,6 +511,7 @@ def extract_stars(frame: PreprocessedFrame, cfg: dict) -> list[StarCandidate]:
             image,
             seg,
             snr_map,
+            local_max,
             peak_threshold_sigma,
         )
         blend_flag = bool(blend_cfg.get("enabled", True)) and peak_summary["num_local_peaks"] > 1

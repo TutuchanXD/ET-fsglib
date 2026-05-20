@@ -126,7 +126,12 @@ def candidates_to_observed(candidates: list[StarCandidate], projector, cfg: dict
     observed = []
     
     for cand in candidates:
-        los_body = projector.pixel_to_los_body(cand.detector_id, cand.x, cand.y)
+        los_body = _pixel_to_los(projector, cand.detector_id, cand.x, cand.y)
+        if los_body is None:
+            raise ValueError(
+                "projector must provide pixel_to_los_body() or pixel_to_body_los() "
+                "returning a finite 3-vector"
+            )
         los_cov_body, sigma_angle_arcsec = propagate_centroid_covariance(
             projector,
             cand.detector_id,
