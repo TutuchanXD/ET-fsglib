@@ -401,8 +401,14 @@ class LostInSpaceMatcher:
                 catalog_id=int(self.index.catalog_ids[cat_pos]),
                 los_body=observed_subset[obs_pos].los_body,
                 los_inertial=self.index.catalog_vectors[cat_pos],
-                weight=max(float(observed_subset[obs_pos].snr), 1.0),
-                flags={"match_mode": "lost_in_space", "seed_match": True},
+                weight=max(float(observed_subset[obs_pos].weight), 1e-6),
+                flags={
+                    "match_mode": "lost_in_space",
+                    "seed_match": True,
+                    "sigma_angle_arcsec": observed_subset[obs_pos].sigma_angle_arcsec,
+                    "weight_source": observed_subset[obs_pos].flags.get("weight_source"),
+                    "weight_mode": observed_subset[obs_pos].flags.get("weight_mode"),
+                },
             )
             for obs_pos, cat_pos in sorted(mapping.items())
         ]
@@ -432,9 +438,15 @@ class LostInSpaceMatcher:
                     los_body=obs.los_body,
                     los_inertial=self.index.catalog_vectors[int(col)],
                     residual_arcsec=residual,
-                    weight=max(float(obs.snr), 1.0),
+                    weight=max(float(obs.weight), 1e-6),
                     match_score=1.0 / (1.0 + residual),
-                    flags={"match_mode": "lost_in_space", "residual_arcsec": residual},
+                    flags={
+                        "match_mode": "lost_in_space",
+                        "residual_arcsec": residual,
+                        "sigma_angle_arcsec": obs.sigma_angle_arcsec,
+                        "weight_source": obs.flags.get("weight_source"),
+                        "weight_mode": obs.flags.get("weight_mode"),
+                    },
                 )
             )
         matched.sort(key=lambda star: str(star.source_id))

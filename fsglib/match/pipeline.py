@@ -16,13 +16,16 @@ def _build_matched_star(obs: ObservedStar, ref: ReferenceStar, dist2: float) -> 
         los_body=obs.los_body,
         los_inertial=ref.los_inertial,
         residual_arcsec=None,
-        weight=max(obs.snr, 1.0),
+        weight=max(float(obs.weight), 1e-6),
         match_score=1.0 / (1.0 + dist2),
         flags={
             "match_mode": "predicted_position",
             "residual_pix": residual_pix,
             "observed_xy": (obs.x, obs.y),
             "predicted_xy": ref.predicted_xy.get(obs.detector_id),
+            "sigma_angle_arcsec": obs.sigma_angle_arcsec,
+            "weight_source": obs.flags.get("weight_source"),
+            "weight_mode": obs.flags.get("weight_mode"),
         },
     )
 

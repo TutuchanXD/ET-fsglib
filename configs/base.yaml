@@ -27,6 +27,7 @@ detector:
 
 psf:
   active_model_key: null
+  template_bundle_path: null
 
 preprocess:
   enable_bias_subtraction: true
@@ -72,20 +73,13 @@ extract:
   max_sharpness: 10.0
   reject_artifact_mask_overlap: true
   artifact_mask_margin_pix: 2
-  bias_correction:
-    enabled: false
-    profile: null
-    psf_model_key: null
-    calibration_key: fsg
-    auto_resolve_psf_model: true
-    strict_centroid_check: true
-    idw_k: 12
-    idw_power: 2.0
-    store_debug_bias: true
-
-bias_profiles:
-  profiles: {}
-  by_psf_model: {}
+  centroid_covariance:
+    min_sigma_pix: 0.03
+    jacobian_step_pix: 0.01
+  deblend:
+    enabled: true
+    policy: flag_only
+    peak_threshold_sigma: null
 
 match:
   algorithm: "predicted_position"

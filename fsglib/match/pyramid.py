@@ -631,7 +631,7 @@ def _build_matched_stars(
                 los_body=obs.los_body,
                 los_inertial=ref.los_inertial,
                 residual_arcsec=angular_residual,
-                weight=max(float(obs.snr), 1.0),
+                weight=max(float(obs.weight), 1e-6),
                 match_score=1.0 / (1.0 + float(cost)),
                 flags={
                     "match_mode": "local_pyramid",
@@ -643,6 +643,9 @@ def _build_matched_stars(
                     "assignment_cost": cost,
                     "photometric_rank_penalty": photometric_penalty,
                     "observed_xy": (obs.x, obs.y),
+                    "sigma_angle_arcsec": obs.sigma_angle_arcsec,
+                    "weight_source": obs.flags.get("weight_source"),
+                    "weight_mode": obs.flags.get("weight_mode"),
                     "predicted_xy": predicted_xy,
                 },
             )
