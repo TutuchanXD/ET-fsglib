@@ -198,7 +198,7 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 
 - 星点提取的直接输出；
 - `shape` 里写入由候选像素直接测得的二阶矩形态指标；
-- `flags` 里写入 hysteresis 阈值、质心窗口、peak 像素、shape summary、bias correction；
+- `flags` 里写入 hysteresis 阈值、质心窗口、peak 像素、shape summary、blend flag 和 centroid covariance summary；
 
 ### 5.2 观测星与匹配星
 
@@ -304,8 +304,10 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 质心方法：
 
 - `weighted_centroid`
+- `adaptive_moment_centroid`
 - `fixed_window_first_moment`
 - `full_window_first_moment`
+- `psf_template_fit`（接口已声明，真实模板拟合留给 #89）
 
 配置入口：
 
@@ -319,24 +321,25 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 - `extract.centroid_method`
 - `extract.centroid_window.size`
 - `extract.reject_edge_margin`
-- `extract.bias_correction.*`
+- `extract.centroid_covariance.*`
+- `extract.deblend.*`
 
 行为：
 
 - segmentation 在 SNR 图上使用 seed/grow hysteresis，两个阈值都使用严格 `>` 比较；
 - grow region 使用 8-connected 连通性，且必须连接到至少一个 seed pixel；
-- 多个 seed 落入同一个 grown component 时返回一个 candidate，近邻拆分留给 PR13；
+- 多个 seed 落入同一个 grown component 时返回一个 candidate，并通过 PR13 的 blend flag 标记多峰风险；
 - `weighted_centroid` 模式下的 `flux`、`area`、candidate `snr` 和 `StarCandidate.bbox` 基于 grown segment；
 - fixed-window centroid 模式下 `area` 和 candidate `snr` 仍基于 grown segment，但 `flux` 和 `StarCandidate.bbox` 来自 centroid window；grown segment bbox 保存在 `flags["segment_bbox"]`；
 - `grow_threshold_sigma = seed_threshold_sigma` 可复现 seed-only segmentation；
-- shape 由算法从 candidate pixels 自行计算，不依赖外部 PSF；外部 PSF/ML centroid 留给 PR13；
+- shape 由算法从 candidate pixels 自行计算，不依赖外部 PSF；真实 PSF-template centroid 留给 #89；
 - `ellipticity = 1 - sqrt(lambda_min / lambda_max)`，超过 `extract.max_ellipticity` 的候选会被拒绝；
 - `fwhm_pix` 是 major-axis 二阶矩代理量，`sharpness` 是 peak / grown-segment 平均面亮度；
-- 默认 `base.yaml` 会拒绝单像素/退化二阶矩候选、过尖锐候选，以及与 saturation/artifact mask 相交的候选；关闭 `extract.reject_degenerate_sources` 后仍可保留退化候选并标记 `shape_degenerate=true`。
-
-其他：
-
-- ~~bias correction 的入口在 [fsglib/extract/bias.py](/home/cxgao/ET/FSG/fsglib/fsglib/extract/bias.py:69)~~（已经弃用——chenxu）。
+- 默认 `base.yaml` 会拒绝单像素/退化二阶矩候选、过尖锐候选，以及与 saturation/artifact mask 相交的候选；关闭 `extract.reject_degenerate_sources` 后仍可保留退化候选并标记 `shape_degenerate=true`；
+- PR13 保持 `weighted_centroid` 作为默认星上友好的低时延质心算法，同时为每个候选记录 `centroid_cov_pix` 和 `centroid_sigma_*`；
+- `adaptive_moment_centroid` 是显式启用的二阶矩加权质心变体；
+- `psf_template_fit` 需要 `psf.template_bundle_path`，但 PR13 只保留接口和文档，真正基于 Photsim7 PSF bundle 的模板拟合留给 #89；
+- grown segment 内的多个局部峰会记录 `blend_flag` / `num_local_peaks`；`extract.deblend.policy=reject` 可保守丢弃混叠候选。
 
 ### 6.4 候选星转观测向量
 
@@ -347,6 +350,12 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 接口用于通用投影链路，要求 `projector` ：
 
 - `pixel_to_los_body(detector_id, x, y)`
+
+PR13 会通过有限差分 projector Jacobian 将 `StarCandidate.centroid_cov_pix`
+传播到 `ObservedStar.los_cov_body` 和 `ObservedStar.sigma_angle_arcsec`。
+`attitude.weight_mode` 可以选择 `snr`、`centroid_variance` 或
+`variance_snr_hybrid`，但只要存在 covariance，结果中都会记录
+`sigma_angle_arcsec`。
 
 **当前导星直接调用 `et_focalplane` 做像点到 LOS 的转换。**
 

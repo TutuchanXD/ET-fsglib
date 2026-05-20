@@ -268,7 +268,16 @@ def solve_attitude(
         residual_max_arcsec=rmax,
         degraded=degraded,
         mode=mode,
-        meta={"active_detector_ids": active_detector_ids, "quality_flag": quality_flag},
+        meta={
+            "active_detector_ids": active_detector_ids,
+            "quality_flag": quality_flag,
+            "weight_mode": cfg.get("attitude", {}).get("weight_mode", "variance_snr_hybrid"),
+            "effective_weights": [float(m.weight) for m in matched_used],
+            "sigma_angle_arcsec": [
+                m.flags.get("sigma_angle_arcsec") for m in matched_used
+            ],
+            "weight_sources": [m.flags.get("weight_source") for m in matched_used],
+        },
     )
 
     return AttitudeSolution(

@@ -135,6 +135,9 @@ def _serialize_candidates(candidates: list[Any]) -> list[dict[str, Any]]:
                 "area_pix": int(candidate.area),
                 "snr": float(candidate.snr),
                 "bbox": list(candidate.bbox),
+                "centroid_cov_pix": _to_builtin(
+                    getattr(candidate, "centroid_cov_pix", None)
+                ),
                 "shape": _to_builtin(candidate.shape),
                 "flags": _to_builtin(candidate.flags),
             }

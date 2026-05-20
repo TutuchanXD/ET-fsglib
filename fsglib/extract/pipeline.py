@@ -2,7 +2,6 @@ import numpy as np
 from scipy import ndimage
 
 from fsglib.common.types import PreprocessedFrame, StarCandidate
-from fsglib.extract.bias import predict_centroid_bias, resolve_bias_correction_config
 
 
 def _expanded_bbox(
@@ -140,31 +139,206 @@ def _hysteresis_segments(
     return segments
 
 
-def _weighted_centroid_from_mask(
-    image: np.ndarray, mask: np.ndarray
-) -> tuple[float, float, float]:
-    flux = float(np.sum(image[mask]))
+def _variance_array(frame: PreprocessedFrame) -> np.ndarray:
+    source = frame.variance_map
+    if source is None:
+        source = np.asarray(frame.noise_map, dtype=np.float64) ** 2
+    variance = np.asarray(source, dtype=np.float64)
+    if variance.shape == ():
+        variance = np.full_like(frame.image, float(variance), dtype=np.float64)
+    if variance.shape != frame.image.shape:
+        raise ValueError(
+            f"frame variance/noise shape {variance.shape} does not match image shape {frame.image.shape}"
+        )
+    return np.maximum(variance, 0.0)
+
+
+def _centroid_covariance_cfg(cfg: dict) -> dict:
+    return dict(cfg.get("extract", {}).get("centroid_covariance", {}))
+
+
+def _centroid_min_sigma_pix(cfg: dict) -> float:
+    cov_cfg = _centroid_covariance_cfg(cfg)
+    value = cov_cfg.get("min_sigma_pix", 0.03)
+    return _finite_nonnegative_float(value, "centroid_covariance.min_sigma_pix")
+
+
+def _apply_centroid_covariance_floor(cov: np.ndarray, min_sigma_pix: float) -> np.ndarray:
+    cov = np.asarray(cov, dtype=np.float64)
+    if cov.shape != (2, 2) or not np.all(np.isfinite(cov)):
+        cov = np.eye(2, dtype=np.float64) * min_sigma_pix**2
+    cov = 0.5 * (cov + cov.T)
+    if min_sigma_pix > 0.0:
+        cov = cov + np.eye(2, dtype=np.float64) * min_sigma_pix**2
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    eigvals = np.maximum(eigvals, min_sigma_pix**2)
+    return eigvecs @ np.diag(eigvals) @ eigvecs.T
+
+
+def _centroid_from_values(
+    signal: np.ndarray,
+    noise_var: np.ndarray,
+    xs: np.ndarray,
+    ys: np.ndarray,
+    *,
+    min_sigma_pix: float,
+    kernel_values: np.ndarray | None = None,
+) -> tuple[float, float, float, np.ndarray]:
+    signal = np.asarray(signal, dtype=np.float64)
+    noise_var = np.asarray(noise_var, dtype=np.float64)
+    xs = np.asarray(xs, dtype=np.float64)
+    ys = np.asarray(ys, dtype=np.float64)
+    if kernel_values is None:
+        kernel_values = np.ones_like(signal, dtype=np.float64)
+    else:
+        kernel_values = np.asarray(kernel_values, dtype=np.float64)
+    weights = signal * kernel_values
+    flux = float(np.sum(weights))
     if flux <= 0.0 or not np.isfinite(flux):
-        return np.nan, np.nan, flux
+        return np.nan, np.nan, flux, _apply_centroid_covariance_floor(
+            np.full((2, 2), np.nan, dtype=np.float64),
+            min_sigma_pix,
+        )
+    x = float(np.sum(xs * weights) / flux)
+    y = float(np.sum(ys * weights) / flux)
+    dx_dI = kernel_values * (xs - x) / flux
+    dy_dI = kernel_values * (ys - y) / flux
+    cov = np.array(
+        [
+            [np.sum(noise_var * dx_dI * dx_dI), np.sum(noise_var * dx_dI * dy_dI)],
+            [np.sum(noise_var * dx_dI * dy_dI), np.sum(noise_var * dy_dI * dy_dI)],
+        ],
+        dtype=np.float64,
+    )
+    return x, y, flux, _apply_centroid_covariance_floor(cov, min_sigma_pix)
+
+
+def _centroid_from_mask(
+    image: np.ndarray,
+    variance: np.ndarray,
+    mask: np.ndarray,
+    *,
+    min_sigma_pix: float,
+    kernel: np.ndarray | None = None,
+) -> tuple[float, float, float, np.ndarray]:
     ys, xs = np.where(mask)
-    x = float(np.sum(xs * image[mask]) / flux)
-    y = float(np.sum(ys * image[mask]) / flux)
-    return x, y, flux
+    kernel_values = None if kernel is None else kernel[mask]
+    return _centroid_from_values(
+        image[mask],
+        variance[mask],
+        xs,
+        ys,
+        min_sigma_pix=min_sigma_pix,
+        kernel_values=kernel_values,
+    )
+
+
+def _weighted_centroid_from_mask(
+    image: np.ndarray,
+    variance: np.ndarray,
+    mask: np.ndarray,
+    *,
+    min_sigma_pix: float,
+) -> tuple[float, float, float, np.ndarray]:
+    return _centroid_from_mask(
+        image,
+        variance,
+        mask,
+        min_sigma_pix=min_sigma_pix,
+    )
 
 
 def _first_moment_in_bbox(
-    image: np.ndarray, bbox: tuple[int, int, int, int]
-) -> tuple[float, float, float]:
+    image: np.ndarray,
+    variance: np.ndarray,
+    bbox: tuple[int, int, int, int],
+    *,
+    min_sigma_pix: float,
+) -> tuple[float, float, float, np.ndarray]:
     x0, y0, x1, y1 = bbox
     window = np.asarray(image[y0 : y1 + 1, x0 : x1 + 1], dtype=np.float64)
-    flux = float(np.sum(window))
-    if flux <= 0.0 or not np.isfinite(flux):
-        return np.nan, np.nan, flux
-
+    variance_window = np.asarray(variance[y0 : y1 + 1, x0 : x1 + 1], dtype=np.float64)
     ys, xs = np.indices(window.shape, dtype=np.float64)
-    x = float(x0 + np.sum(xs * window) / flux)
-    y = float(y0 + np.sum(ys * window) / flux)
-    return x, y, flux
+    return _centroid_from_values(
+        window.ravel(),
+        variance_window.ravel(),
+        (x0 + xs).ravel(),
+        (y0 + ys).ravel(),
+        min_sigma_pix=min_sigma_pix,
+    )
+
+
+def _adaptive_moment_centroid_from_mask(
+    image: np.ndarray,
+    variance: np.ndarray,
+    mask: np.ndarray,
+    *,
+    min_sigma_pix: float,
+) -> tuple[float, float, float, np.ndarray]:
+    x0, y0, flux0, _ = _weighted_centroid_from_mask(
+        image,
+        variance,
+        mask,
+        min_sigma_pix=min_sigma_pix,
+    )
+    if flux0 <= 0.0 or not np.isfinite(x0) or not np.isfinite(y0):
+        return x0, y0, flux0, _apply_centroid_covariance_floor(
+            np.full((2, 2), np.nan, dtype=np.float64),
+            min_sigma_pix,
+        )
+
+    ys, xs = np.where(mask)
+    weights = np.maximum(np.asarray(image[mask], dtype=np.float64), 0.0)
+    if float(np.sum(weights)) <= 0.0:
+        return _weighted_centroid_from_mask(
+            image,
+            variance,
+            mask,
+            min_sigma_pix=min_sigma_pix,
+        )
+    dx = xs.astype(np.float64) - x0
+    dy = ys.astype(np.float64) - y0
+    norm = float(np.sum(weights))
+    mxx = float(np.sum(weights * dx * dx) / norm)
+    myy = float(np.sum(weights * dy * dy) / norm)
+    mxy = float(np.sum(weights * dx * dy) / norm)
+    moment_cov = np.array([[mxx, mxy], [mxy, myy]], dtype=np.float64)
+    moment_cov = _apply_centroid_covariance_floor(moment_cov, min_sigma_pix)
+    try:
+        inv_cov = np.linalg.inv(moment_cov)
+    except np.linalg.LinAlgError:
+        return _weighted_centroid_from_mask(
+            image,
+            variance,
+            mask,
+            min_sigma_pix=min_sigma_pix,
+        )
+    kernel = np.zeros_like(image, dtype=np.float64)
+    q = (
+        inv_cov[0, 0] * dx * dx
+        + 2.0 * inv_cov[0, 1] * dx * dy
+        + inv_cov[1, 1] * dy * dy
+    )
+    kernel[mask] = np.exp(-0.5 * np.clip(q, 0.0, 100.0))
+    return _centroid_from_mask(
+        image,
+        variance,
+        mask,
+        min_sigma_pix=min_sigma_pix,
+        kernel=kernel,
+    )
+
+
+def _validate_psf_template_fit_interface(cfg: dict) -> None:
+    template_path = cfg.get("psf", {}).get("template_bundle_path")
+    if not template_path:
+        raise ValueError(
+            "extract.centroid_method=psf_template_fit requires psf.template_bundle_path"
+        )
+    raise NotImplementedError(
+        "extract.centroid_method=psf_template_fit is reserved for #89; "
+        "PR13 only defines the YAML/interface contract."
+    )
 
 
 def _shape_metrics_from_mask(
@@ -231,6 +405,51 @@ def _shape_metrics_from_mask(
     }
 
 
+def _blend_config(cfg: dict) -> dict:
+    default_cfg = {
+        "enabled": True,
+        "policy": "flag_only",
+        "peak_threshold_sigma": None,
+    }
+    default_cfg.update(dict(cfg.get("extract", {}).get("deblend", {})))
+    policy = str(default_cfg.get("policy", "flag_only"))
+    if policy not in {"flag_only", "reject"}:
+        raise ValueError("extract.deblend.policy must be 'flag_only' or 'reject'")
+    default_cfg["policy"] = policy
+    return default_cfg
+
+
+def _local_peak_summary(
+    image: np.ndarray,
+    seg: np.ndarray,
+    snr_map: np.ndarray,
+    local_max: np.ndarray,
+    threshold_sigma: float,
+) -> dict:
+    peak_mask = seg & local_max & (snr_map > threshold_sigma)
+    labeled, num = ndimage.label(peak_mask, structure=np.ones((3, 3), dtype=bool))
+    peaks = []
+    for label_id in range(1, num + 1):
+        ys, xs = np.where(labeled == label_id)
+        if xs.size == 0:
+            continue
+        values = image[ys, xs]
+        idx = int(np.argmax(values))
+        peaks.append(
+            {
+                "x_pix": int(xs[idx]),
+                "y_pix": int(ys[idx]),
+                "peak": float(values[idx]),
+                "snr": float(snr_map[ys[idx], xs[idx]]),
+            }
+        )
+    peaks.sort(key=lambda item: item["peak"], reverse=True)
+    return {
+        "num_local_peaks": len(peaks),
+        "local_peaks": peaks,
+    }
+
+
 def extract_stars(frame: PreprocessedFrame, cfg: dict) -> list[StarCandidate]:
     image = frame.image
     noise = frame.noise_map
@@ -238,9 +457,14 @@ def extract_stars(frame: PreprocessedFrame, cfg: dict) -> list[StarCandidate]:
     extract_cfg = cfg["extract"]
     centroid_method = str(extract_cfg.get("centroid_method", "weighted_centroid"))
     centroid_window_cfg = extract_cfg.get("centroid_window", {})
-    bias_cfg = resolve_bias_correction_config(cfg)
+    if centroid_method == "psf_template_fit":
+        _validate_psf_template_fit_interface(cfg)
+    variance = _variance_array(frame)
+    min_sigma_pix = _centroid_min_sigma_pix(cfg)
+    blend_cfg = _blend_config(cfg)
 
     snr_map = np.where(mask, image / np.maximum(noise, 1e-6), 0.0)
+    local_max = image == ndimage.maximum_filter(image, size=3, mode="nearest")
 
     seed_th = _finite_nonnegative_float(
         extract_cfg["seed_threshold_sigma"],
@@ -275,6 +499,25 @@ def extract_stars(frame: PreprocessedFrame, cfg: dict) -> list[StarCandidate]:
         segment_bbox = _expanded_bbox(
             xs, ys, image.shape, int(extract_cfg.get("bbox_expand", 0))
         )
+        peak_threshold_sigma = blend_cfg.get("peak_threshold_sigma")
+        if peak_threshold_sigma is None:
+            peak_threshold_sigma = seed_th
+        else:
+            peak_threshold_sigma = _finite_nonnegative_float(
+                peak_threshold_sigma,
+                "deblend.peak_threshold_sigma",
+            )
+        peak_summary = _local_peak_summary(
+            image,
+            seg,
+            snr_map,
+            local_max,
+            peak_threshold_sigma,
+        )
+        blend_flag = bool(blend_cfg.get("enabled", True)) and peak_summary["num_local_peaks"] > 1
+        if blend_flag and blend_cfg["policy"] == "reject":
+            continue
+
         shape = _shape_metrics_from_mask(image, seg, peak)
         if extract_cfg.get("reject_degenerate_sources", False) and bool(
             shape["shape_degenerate"]
@@ -313,7 +556,20 @@ def extract_stars(frame: PreprocessedFrame, cfg: dict) -> list[StarCandidate]:
                 continue
 
         if centroid_method == "weighted_centroid":
-            x, y, flux = _weighted_centroid_from_mask(image, seg)
+            x, y, flux, centroid_cov_pix = _weighted_centroid_from_mask(
+                image,
+                variance,
+                seg,
+                min_sigma_pix=min_sigma_pix,
+            )
+            centroid_bbox = segment_bbox
+        elif centroid_method == "adaptive_moment_centroid":
+            x, y, flux, centroid_cov_pix = _adaptive_moment_centroid_from_mask(
+                image,
+                variance,
+                seg,
+                min_sigma_pix=min_sigma_pix,
+            )
             centroid_bbox = segment_bbox
         elif centroid_method in {
             "fixed_window_first_moment",
@@ -321,7 +577,12 @@ def extract_stars(frame: PreprocessedFrame, cfg: dict) -> list[StarCandidate]:
         }:
             window_size = int(centroid_window_cfg.get("size", 31))
             centroid_bbox = _fixed_window_bbox(peak_x, peak_y, image.shape, window_size)
-            x, y, flux = _first_moment_in_bbox(image, centroid_bbox)
+            x, y, flux, centroid_cov_pix = _first_moment_in_bbox(
+                image,
+                variance,
+                centroid_bbox,
+                min_sigma_pix=min_sigma_pix,
+            )
         else:
             raise ValueError(f"Unsupported extract.centroid_method: {centroid_method}")
 
@@ -333,13 +594,26 @@ def extract_stars(frame: PreprocessedFrame, cfg: dict) -> list[StarCandidate]:
         ):
             continue
 
-        snr = float(np.sum(image[seg]) / np.sqrt(np.sum(noise[seg] ** 2)))
-        corrected_x = x
-        corrected_y = y
+        snr_denominator = max(float(np.sqrt(np.sum(noise[seg] ** 2))), 1e-12)
+        snr = float(np.sum(image[seg]) / snr_denominator)
+        cov_eigvals = np.linalg.eigvalsh(np.asarray(centroid_cov_pix, dtype=np.float64))
+        sigma_x_pix = float(np.sqrt(max(float(centroid_cov_pix[0, 0]), 0.0)))
+        sigma_y_pix = float(np.sqrt(max(float(centroid_cov_pix[1, 1]), 0.0)))
+        sigma_radial_pix = float(np.sqrt(max(float(np.trace(centroid_cov_pix)), 0.0)))
         flags = {
             "centroid_method": centroid_method,
             "raw_centroid_x_pix": float(x),
             "raw_centroid_y_pix": float(y),
+            "centroid_covariance_source": "noise_propagation",
+            "centroid_cov_xx_pix2": float(centroid_cov_pix[0, 0]),
+            "centroid_cov_xy_pix2": float(centroid_cov_pix[0, 1]),
+            "centroid_cov_yy_pix2": float(centroid_cov_pix[1, 1]),
+            "centroid_sigma_x_pix": sigma_x_pix,
+            "centroid_sigma_y_pix": sigma_y_pix,
+            "centroid_sigma_radial_pix": sigma_radial_pix,
+            "centroid_sigma_major_pix": float(np.sqrt(max(float(cov_eigvals[-1]), 0.0))),
+            "centroid_sigma_minor_pix": float(np.sqrt(max(float(cov_eigvals[0]), 0.0))),
+            "centroid_min_sigma_pix": min_sigma_pix,
             "segment_bbox": segment_bbox,
             "centroid_bbox": centroid_bbox,
             "peak_x_pix": peak_x,
@@ -354,33 +628,24 @@ def extract_stars(frame: PreprocessedFrame, cfg: dict) -> list[StarCandidate]:
             "shape_sharpness": float(shape["sharpness"]),
             "shape_roundness": float(shape["roundness"]),
             "shape_degenerate": bool(shape["shape_degenerate"]),
+            "blend_flag": blend_flag,
+            "deblend_policy": blend_cfg["policy"],
+            "num_local_peaks": int(peak_summary["num_local_peaks"]),
+            "local_peaks": peak_summary["local_peaks"],
         }
-        if bias_cfg is not None:
-            bias_x, bias_y = predict_centroid_bias(x, y, bias_cfg)
-            corrected_x = float(x - bias_x)
-            corrected_y = float(y - bias_y)
-            flags.update(
-                {
-                    "centroid_bias_corrected": True,
-                    "predicted_bias_x_pix": float(bias_x),
-                    "predicted_bias_y_pix": float(bias_y),
-                    "bias_profile": bias_cfg["profile_name"],
-                }
-            )
-        else:
-            flags["centroid_bias_corrected"] = False
 
         candidates.append(
             StarCandidate(
                 detector_id=frame.detector_id,
                 source_id=len(candidates),
-                x=corrected_x,
-                y=corrected_y,
+                x=x,
+                y=y,
                 flux=flux,
                 peak=peak,
                 area=area,
                 snr=snr,
                 bbox=centroid_bbox,
+                centroid_cov_pix=centroid_cov_pix,
                 shape=shape,
                 flags=flags,
             )

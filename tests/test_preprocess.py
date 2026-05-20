@@ -268,7 +268,6 @@ def test_preprocess_calibration_preserves_extractable_star_flux_and_centroid():
             "centroid_method": "weighted_centroid",
             "bbox_expand": 0,
             "reject_edge_margin": 0,
-            "bias_correction": {"enabled": False},
         },
     }
 
@@ -530,7 +529,6 @@ def test_extract_snr_uses_preprocess_poisson_noise_map():
             "centroid_method": "weighted_centroid",
             "bbox_expand": 0,
             "reject_edge_margin": 0,
-            "bias_correction": {"enabled": False},
         },
     }
 

@@ -46,6 +46,7 @@ class StarCandidate:
     area: int
     snr: float
     bbox: tuple[int, int, int, int]
+    centroid_cov_pix: np.ndarray | None = None
     shape: dict = field(default_factory=dict)
     flags: dict = field(default_factory=dict)
 
@@ -59,6 +60,9 @@ class ObservedStar:
     flux: float
     snr: float
     weight: float = 1.0
+    centroid_cov_pix: np.ndarray | None = None
+    los_cov_body: np.ndarray | None = None
+    sigma_angle_arcsec: float | None = None
     flags: dict = field(default_factory=dict)
 
 @dataclass

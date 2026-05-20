@@ -70,8 +70,7 @@ fsglib/
 │   ├── projector.py       #   Sky-to-detector projection models
 │   └── types.py           #   CatalogStar, ReferenceStar, EphemerisContext
 ├── extract/               # Star candidate extraction
-│   ├── pipeline.py        #   extract_stars: island detection + centroid computation
-│   └── bias.py            #   Centroid bias prediction and correction
+│   └── pipeline.py        #   extract_stars: island detection, centroiding, covariance
 ├── match/                 # Star matching
 │   ├── pipeline.py        #   match_stars: predicted-position + triangle matching
 │   └── triangle.py        #   TriangleMatcher implementation
@@ -396,7 +395,7 @@ pytest -q
 
 The current tests cover core math and data-flow components, including:
 
-- centroid extraction methods and bias-correction checks;
+- centroid extraction methods, covariance propagation, and blend flags;
 - star matching and local pyramid matching;
 - QUEST attitude solving;
 - frame evaluation metrics;
