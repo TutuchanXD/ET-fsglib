@@ -1,4 +1,5 @@
 import json
+import csv
 import re
 from pathlib import Path
 from typing import Any
@@ -7,6 +8,7 @@ import numpy as np
 
 from fsglib.common.coords import radec_to_unit_vector
 from fsglib.common.io import load_dataset_batch
+from fsglib.pipeline.error_budget import error_budget_csv_rows
 
 
 def _get_field(obj: Any, name: str, default: Any = None) -> Any:
@@ -26,6 +28,8 @@ def _safe_artifact_mask_filename(name: object) -> str:
 
 
 def _to_builtin(value: Any) -> Any:
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        return _to_builtin(value.to_dict())
     if isinstance(value, dict):
         return {str(key): _to_builtin(val) for key, val in value.items()}
     if isinstance(value, (list, tuple)):
@@ -688,6 +692,8 @@ def _build_solution_payload(result: Any) -> dict[str, Any]:
         evaluation_meta = dict(evaluation.meta) if isinstance(evaluation.meta, dict) else {}
         if "centroid_step_audit" in evaluation_meta:
             evaluation_meta["centroid_step_audit"] = centroid_step_audit_summary
+        error_budget = getattr(evaluation, "error_budget", None)
+        error_budget_payload = None if error_budget is None else error_budget.to_dict()
         payload["evaluation"] = {
             "num_truth_stars": evaluation.num_truth_stars,
             "num_candidate_truth_matches": evaluation.num_candidate_truth_matches,
@@ -708,6 +714,8 @@ def _build_solution_payload(result: Any) -> dict[str, Any]:
             "meta": evaluation_meta,
             "centroid_step_audit_summary": centroid_step_audit_summary,
         }
+        if error_budget_payload is not None:
+            payload["error_budget"] = error_budget_payload
     return payload
 
 
@@ -763,6 +771,29 @@ def _write_attitude_debug_artifacts(bundle_dir: Path, solution_payload: dict[str
     _write_json(attitude_dir / "robust_rejection.json", robust_rejection)
 
 
+def _write_validation_debug_artifacts(
+    bundle_dir: Path,
+    error_budget_payload: dict[str, Any] | None,
+    cfg: dict | None = None,
+) -> None:
+    if not error_budget_payload:
+        return
+    budget_cfg = {} if cfg is None else dict(cfg.get("evaluation", {}).get("error_budget", {}))
+    validation_dir = bundle_dir / "validation"
+    validation_dir.mkdir(parents=True, exist_ok=True)
+    if budget_cfg.get("output_json", True):
+        _write_json(validation_dir / "error_budget.json", error_budget_payload)
+
+    rows = error_budget_csv_rows(error_budget_payload)
+    if not rows or not budget_cfg.get("output_csv", True):
+        return
+    csv_path = validation_dir / "error_budget_terms.csv"
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def _write_bundle_readme(bundle_dir: Path, result: Any, analysis: dict[str, Any]) -> None:
     raw = _get_field(result, "raw")
     solution = _get_field(result, "solution")
@@ -784,6 +815,8 @@ def _write_bundle_readme(bundle_dir: Path, result: Any, analysis: dict[str, Any]
         "- `attitude/solution_summary.json`: 姿态解算摘要。",
         "- `attitude/covariance.json`: 姿态 covariance 与控制质量指标。",
         "- `attitude/robust_rejection.json`: PR20 姿态鲁棒剔除逐轮审计。",
+        "- `validation/error_budget.json`: PR21 探测器到姿态误差预算 ledger。",
+        "- `validation/error_budget_terms.csv`: PR21 ledger 的逐项表格版本，便于粘贴和排序。",
         "- `centroid_step_audit.json`: 单星 vs 多星质心提取分步骤审计结果，重点看每一步的 `x / y / 总误差` 如何变化。",
         "- `overlay_truth_candidates.png`: 当前 truth 与提取质心叠加图。",
         "- `matched_truth_bias.png`: matched 星从当前 truth 到观测质心的偏差箭头图。",
@@ -894,6 +927,7 @@ def save_debug_bundle(result: Any, cfg: dict) -> Path | None:
     _write_json(bundle_dir / "solution.json", solution_payload)
     _write_json(bundle_dir / "analysis.json", analysis_payload)
     _write_attitude_debug_artifacts(bundle_dir, solution_payload)
+    _write_validation_debug_artifacts(bundle_dir, solution_payload.get("error_budget"), cfg)
     evaluation = _get_field(result, "evaluation")
     if evaluation is not None and isinstance(evaluation.meta, dict):
         centroid_step_audit = evaluation.meta.get("centroid_step_audit")

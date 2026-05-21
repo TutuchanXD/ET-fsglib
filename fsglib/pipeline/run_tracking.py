@@ -395,7 +395,7 @@ def _build_tracking_frame(
     validation_reason = hypothesis_debug.get("reason", "ok" if solution.valid else f"{mode_value}_failed")
 
     t0 = perf_counter()
-    evaluation = evaluate_frame_result(raw, pre, cand, matching, solution, dataset_ctx, cfg=effective_cfg)
+    evaluation = evaluate_frame_result(raw, pre, cand, matching, solution, dataset_ctx, cfg=effective_cfg, observed=obs)
     timings["evaluate"] = perf_counter() - t0
     timings["total"] = perf_counter() - total_start
 
@@ -499,7 +499,7 @@ def _build_invalid_mode_frame(
     )
 
     t0 = perf_counter()
-    evaluation = evaluate_frame_result(raw, pre, cand, matching, solution, dataset_ctx, cfg=cfg)
+    evaluation = evaluate_frame_result(raw, pre, cand, matching, solution, dataset_ctx, cfg=cfg, observed=obs)
     timings["evaluate"] = perf_counter() - t0
     timings["total"] = perf_counter() - total_start
 
@@ -650,7 +650,7 @@ def _build_lost_in_space_frame(
     timings["attitude"] = perf_counter() - t0
 
     t0 = perf_counter()
-    evaluation = evaluate_frame_result(raw, pre, cand, matching, solution, dataset_ctx, cfg=effective_cfg)
+    evaluation = evaluate_frame_result(raw, pre, cand, matching, solution, dataset_ctx, cfg=effective_cfg, observed=obs)
     timings["evaluate"] = perf_counter() - t0
     timings["total"] = perf_counter() - total_start
 

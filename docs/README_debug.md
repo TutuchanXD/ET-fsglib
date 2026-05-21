@@ -1,4 +1,3 @@
-# 调试输出
 
 ## 1. 输出目录
 
@@ -36,6 +35,10 @@
   - PR19 姿态 covariance 与控制质量指标。
 - `attitude/robust_rejection.json`
   - PR20 姿态鲁棒剔除逐轮审计，包含 rejected IDs、残差、阈值和原因。
+- `validation/error_budget.json`
+  - PR21 探测器噪声到姿态误差的结构化 ledger；每个 term 都带单位、来源、假设和缺失原因。
+- `validation/error_budget_terms.csv`
+  - 同一 ledger 的表格版本，便于排序、筛选和复制到分析表。
 - `overlay_truth_candidates.png`
   - 静态 truth 与提取质心叠加图。
 - `matched_truth_bias.png`
@@ -78,6 +81,9 @@
 - `quality`
   - 姿态解算的质量摘要，如输入星数、使用星数、残差门限和
     `quality.meta.attitude_covariance` / `quality.meta.robust_rejection`。
+- `error_budget`
+  - PR21 error-budget ledger 的完整 JSON 副本；debug bundle 同时在
+    `validation/error_budget.json` 保存独立文件。
 - `timings_s`
   - 各阶段耗时。
 - `matching.debug.mean_residual_pix`

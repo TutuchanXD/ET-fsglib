@@ -13,6 +13,7 @@ from fsglib.common.types import (
     TruthStar,
 )
 from fsglib.pipeline.centroid_audit import compute_centroid_step_audit
+from fsglib.pipeline.error_budget import build_error_budget_ledger, summarize_error_budget_ledgers
 
 
 def _nearest_pixel_distance(
@@ -152,6 +153,7 @@ def evaluate_frame_result(
     solution,
     dataset_ctx: DatasetContext | None,
     cfg: dict | None = None,
+    observed: list | None = None,
 ) -> FrameEvaluation | None:
     truth_stars, truth_source = _resolve_truth_stars(raw, dataset_ctx)
     if not truth_stars:
@@ -218,7 +220,7 @@ def evaluate_frame_result(
             }
         meta["centroid_step_audit"] = audit_payload
 
-    return FrameEvaluation(
+    evaluation = FrameEvaluation(
         num_truth_stars=len(truth_stars),
         num_candidate_truth_matches=sum(d <= 3.0 for d in centroid_distances),
         centroid_mae_pix=centroid_mae,
@@ -237,6 +239,24 @@ def evaluate_frame_result(
         centroid_rms_dy_pix=centroid_rms_dy,
         meta=meta,
     )
+    if cfg is not None:
+        error_budget = build_error_budget_ledger(
+            raw=raw,
+            preprocessed=preprocessed,
+            candidates=candidates,
+            observed=[] if observed is None else observed,
+            matching=matching,
+            solution=solution,
+            evaluation=evaluation,
+            dataset_ctx=dataset_ctx,
+            cfg=cfg,
+        )
+        evaluation.error_budget = error_budget
+        evaluation.meta["error_budget"] = error_budget.to_dict(
+            include_terms=False,
+            include_per_star=False,
+        )
+    return evaluation
 
 
 def summarize_sequence_result(sequence_result) -> dict:
@@ -271,6 +291,11 @@ def summarize_sequence_result(sequence_result) -> dict:
     ]
     tracking_frames = [frame for frame in frame_results if frame.meta.get("requested_mode", frame.solution.mode) == "tracking"]
     valid_frames = [frame for frame in frame_results if frame.solution.valid]
+    error_budget_ledgers = [
+        frame.evaluation.error_budget
+        for frame in frame_results
+        if frame.evaluation is not None and frame.evaluation.error_budget is not None
+    ]
     rms_values = np.array([frame.solution.residual_rms_arcsec for frame in frame_results], dtype=np.float64)
     matched_values = np.array([frame.solution.num_matched for frame in frame_results], dtype=np.float64)
     boresight_errors = _collect_eval_values(frame_results, "boresight_error_arcsec")
@@ -357,6 +382,7 @@ def summarize_sequence_result(sequence_result) -> dict:
         "mean_stage_runtime_s": mean_stage_runtime_s,
         "num_valid_frames": len(valid_frames),
         "final_mode": sequence_result.state_history[-1].mode if sequence_result.state_history else None,
+        "error_budget": summarize_error_budget_ledgers(error_budget_ledgers),
     }
 
 

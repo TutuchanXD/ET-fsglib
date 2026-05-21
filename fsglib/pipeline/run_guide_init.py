@@ -21,6 +21,7 @@ from fsglib.pipeline.convert import (
     observed_weight_from_sigma,
     propagate_centroid_covariance,
 )
+from fsglib.pipeline.error_budget import build_error_budget_ledger
 from fsglib.pipeline.guide_error_audit import compute_guide_error_audit
 from fsglib.preprocess.calibration import load_calibration_products
 from fsglib.preprocess.pipeline import preprocess_frame
@@ -427,6 +428,18 @@ def run_guide_first_frame_init(cfg: dict, *, include_debug_context: bool = False
         matching,
         solution,
     )
+    error_budget = build_error_budget_ledger(
+        raw=None,
+        preprocessed=None,
+        candidates=[],
+        observed=observed,
+        matching=matching,
+        solution=solution,
+        evaluation=None,
+        dataset_ctx=None,
+        cfg=cfg,
+        detector_contexts=detector_contexts,
+    )
 
     matched_per_detector: dict[str, int] = {}
     for matched_star in matching.matched:
@@ -485,6 +498,7 @@ def run_guide_first_frame_init(cfg: dict, *, include_debug_context: bool = False
         },
         "geometry_adapter": geometry_payload,
         "error_audit": error_audit,
+        "error_budget": error_budget.to_dict(),
         "meta": {
             "dataset_root": str(dataset_root),
             "frame_index": int(cfg["guide_init"].get("frame_index", 0)),

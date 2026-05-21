@@ -442,7 +442,15 @@ PR13 会通过有限差分 projector Jacobian 将 `StarCandidate.centroid_cov_pi
 `summarize_sequence_result(sequence_result) -> dict`
 
 - [fsglib/pipeline/evaluate.py](/home/cxgao/ET/FSG/fsglib/fsglib/pipeline/evaluate.py:242)
-- 汇总序列指标。
+- 汇总序列指标，并在帧级 ledger 存在时输出 `error_budget` 聚合百分位。
+
+`build_error_budget_ledger(...) -> ErrorBudgetLedger`
+
+- [fsglib/pipeline/error_budget.py](/home/cxgao/ET/FSG/fsglib/fsglib/pipeline/error_budget.py:1)
+- 生成 PR21 detector-to-attitude error-budget ledger；
+- 每个 term 包含 `name/stage/value/unit/source/assumption/available/reason`；
+- 缺少物理输入时记录 unavailable term，不用 0 伪装未知误差；
+- fake PR9 calibration assets 会在 assumption/provenance 中显式标记。
 
 `save_debug_bundle(result, cfg) -> Path | None`
 
@@ -461,6 +469,7 @@ PR13 会通过有限差分 projector Jacobian 将 `StarCandidate.centroid_cov_pi
 5. 用 `query_detector_sources()` 为每个 detector 构造参考星。
 6. 统一做匹配和 QUEST 解算。
 7. 生成 `guide_error_audit`。
+8. 生成 `error_budget`，用于把 detector/preprocess/centroid/matching/attitude 项串成可追溯预算。
 
 依赖 `et_focalplane` 接口包括：
 
@@ -505,6 +514,23 @@ PR13 会通过有限差分 projector Jacobian 将 `StarCandidate.centroid_cov_pi
 - [configs/guide_truth_noise_0065pix_exact_etcoord.yaml](/home/cxgao/ET/FSG/fsglib/configs/guide_truth_noise_0065pix_exact_etcoord.yaml:1)
 - 当前主链路
 
+PR21 的本地烟测入口：
+
+```bash
+python examples/run_pr21_error_budget_smoke.py
+```
+
+该脚本默认使用 `truth_noise_exact` 小规模 smoke，并在进程内限制内存、
+CPU 时间和 BLAS 线程，防止本地 Gaia/et_focalplane 查询异常扩大导致工作站
+卡死。可通过 `FSGLIB_SMOKE_MAX_MEMORY_GB`、
+`FSGLIB_SMOKE_MEMORY_FRACTION`、`FSGLIB_SMOKE_RESERVE_MEMORY_GB`、
+`FSGLIB_SMOKE_MAX_CPU_SECONDS`、`FSGLIB_SMOKE_MAX_OBS_PER_DETECTOR`、
+`FSGLIB_SMOKE_REFERENCE_TOPK_PER_DETECTOR`、`FSGLIB_SMOKE_CATALOG_G_MAG_MAX`
+调整上限。未显式设置 `FSGLIB_SMOKE_MAX_MEMORY_GB` 时，脚本会按当前
+`MemAvailable` 扣除保留内存后取一个比例作为上限，避免无上限增持。若需要真实图像烟测，可显式设置
+`FSGLIB_PR21_SMOKE_MODE=real_image_no_calib`；该模式会关闭默认 2049 假校准资产，
+因为 legacy 仿真图是 1947 像素。
+
 ## 9. 结果调试
 
 ### 9.1 `FrameResult`
@@ -538,3 +564,5 @@ PR13 会通过有限差分 projector Jacobian 将 `StarCandidate.centroid_cov_pi
 - `solution.json`
 - `analysis.json`
 - `centroid_step_audit.json`
+- `validation/error_budget.json`
+- `validation/error_budget_terms.csv`
