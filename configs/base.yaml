@@ -156,9 +156,16 @@ attitude:
   estimate_covariance: true
   covariance_rank_tol: 1.0e-12
   outlier_reject_enable: true
+  outlier_reject_mode: sigma_clip_iterative
   outlier_max_residual_arcsec: 30.0
   outlier_sigma_clip: 3.0
-  max_iterations: 2
+  outlier_use_measurement_sigma: true
+  outlier_sigma_floor_arcsec: 2.0
+  outlier_mad_fallback_enable: true
+  outlier_mad_min_sigma_arcsec: 1.0e-6
+  outlier_max_reject_per_iteration: 1
+  min_active_detectors_valid: null
+  max_iterations: 5
 
 metrics:
   enable_truth_compare: true

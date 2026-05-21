@@ -60,6 +60,37 @@ def _matched_identity_stars(
     return stars
 
 
+def _robust_attitude_cfg(min_operational: int = 4) -> dict:
+    cfg = _attitude_cfg(min_operational=min_operational)
+    cfg["attitude"].update(
+        {
+            "outlier_reject_enable": True,
+            "outlier_reject_mode": "sigma_clip_iterative",
+            "outlier_max_residual_arcsec": 30.0,
+            "outlier_sigma_clip": 3.0,
+            "max_iterations": 5,
+            "outlier_mad_fallback_enable": True,
+        }
+    )
+    return cfg
+
+
+def _rotate_vector_arcsec(
+    vec: np.ndarray,
+    arcsec: float,
+    axis_hint: np.ndarray | None = None,
+) -> np.ndarray:
+    axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    if axis_hint is not None:
+        axis = np.asarray(axis_hint, dtype=np.float64)
+    axis = axis - np.dot(axis, vec) * vec
+    if np.linalg.norm(axis) < 1e-12:
+        axis = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+        axis = axis - np.dot(axis, vec) * vec
+    axis /= np.linalg.norm(axis)
+    return Rotation.from_rotvec(axis * (float(arcsec) / ARCSEC_PER_RAD)).apply(vec)
+
+
 def test_scalar_first_quaternion_convention_matches_scipy_rotation():
     q_ib = np.array([np.cos(np.pi / 4.0), 0.0, 0.0, np.sin(np.pi / 4.0)])
 
@@ -149,6 +180,111 @@ def test_attitude_solution_does_not_fabricate_covariance_without_sigmas():
     assert cov_meta["available"] is False
     assert cov_meta["reason"] == "missing_sigma_angle_arcsec"
     assert cov_meta["missing_sigma_count"] == 3
+
+
+def test_sigma_clip_iterative_rejects_outlier_below_hard_gate():
+    rng = np.random.default_rng(20)
+    vectors = _random_unit_vectors(rng, 9)
+    stars = _matched_identity_stars(vectors, sigma_arcsec=1.0)
+    stars[-1].los_body = _rotate_vector_arcsec(vectors[-1], 20.0)
+
+    sol = solve_attitude(stars, _robust_attitude_cfg(min_operational=4))
+
+    assert sol.valid
+    assert sol.num_rejected == 1
+    assert sol.num_matched == 8
+    audit = sol.quality["meta"]["robust_rejection"]
+    assert audit["enabled"] is True
+    assert audit["mode"] == "sigma_clip_iterative"
+    assert audit["converged"] is True
+    assert audit["num_rejected"] == 1
+    rejected = audit["rejected_stars"][0]
+    assert rejected["catalog_id"] == 8
+    assert "sigma_clip" in rejected["reasons"]
+    assert rejected["residual_arcsec"] < 30.0
+    assert rejected["normalized_residual"] > 3.0
+
+
+def test_iterative_rejection_degrades_when_operational_support_is_lost():
+    rng = np.random.default_rng(21)
+    vectors = _random_unit_vectors(rng, 4)
+    stars = _matched_identity_stars(vectors, sigma_arcsec=1.0)
+    stars[-1].los_body = _rotate_vector_arcsec(vectors[-1], 90.0)
+
+    sol = solve_attitude(stars, _robust_attitude_cfg(min_operational=4))
+
+    assert not sol.valid
+    assert sol.quality_flag == "DEGRADED"
+    assert sol.num_rejected == 1
+    assert sol.num_matched == 3
+    audit = sol.quality["meta"]["robust_rejection"]
+    assert audit["final_support_count"] == 3
+    assert audit["final_active_detector_count"] == 3
+    assert audit["rejected_stars"][0]["catalog_id"] == 3
+
+
+def test_mad_fallback_rejects_outlier_when_measurement_sigmas_are_missing():
+    rng = np.random.default_rng(22)
+    vectors = _random_unit_vectors(rng, 9)
+    stars = _matched_identity_stars(vectors, sigma_arcsec=None)
+    stars[-1].los_body = _rotate_vector_arcsec(vectors[-1], 25.0)
+
+    sol = solve_attitude(stars, _robust_attitude_cfg(min_operational=4))
+
+    assert sol.valid
+    assert sol.num_rejected == 1
+    rejected = sol.quality["meta"]["robust_rejection"]["rejected_stars"][0]
+    assert rejected["catalog_id"] == 8
+    assert "mad_sigma_clip" in rejected["reasons"]
+
+
+def test_min_active_detectors_valid_can_force_degraded_solution():
+    vectors = _basis_vectors() + [np.array([1.0, 1.0, 1.0]) / np.sqrt(3.0)]
+    stars = _matched_identity_stars(vectors, sigma_arcsec=1.0)
+    for star in stars:
+        star.detector_id = 0
+    cfg = _robust_attitude_cfg(min_operational=4)
+    cfg["attitude"]["min_active_detectors_valid"] = 2
+
+    sol = solve_attitude(stars, cfg)
+
+    assert not sol.valid
+    assert sol.quality_flag == "DEGRADED"
+    assert sol.quality["meta"]["active_detector_ids"] == [0]
+    assert sol.quality["meta"]["min_active_detectors_valid"] == 2
+
+
+def test_sigma_floor_prevents_rejecting_nominal_model_residuals():
+    rng = np.random.default_rng(23)
+    vectors = _random_unit_vectors(rng, 8)
+    stars = _matched_identity_stars(vectors, sigma_arcsec=0.1)
+    for idx, star in enumerate(stars):
+        axis_hint = rng.normal(size=3)
+        star.los_body = _rotate_vector_arcsec(vectors[idx], 1.0 + 0.1 * idx, axis_hint)
+    cfg = _robust_attitude_cfg(min_operational=4)
+    cfg["attitude"]["outlier_sigma_floor_arcsec"] = 2.0
+
+    sol = solve_attitude(stars, cfg)
+
+    assert sol.valid
+    assert sol.num_rejected == 0
+    assert sol.quality["meta"]["robust_rejection"]["converged"] is True
+
+
+def test_single_pass_mode_keeps_legacy_all_hard_gate_rejections():
+    rng = np.random.default_rng(24)
+    vectors = _random_unit_vectors(rng, 7)
+    stars = _matched_identity_stars(vectors, sigma_arcsec=1.0)
+    stars[-1].los_body = _rotate_vector_arcsec(vectors[-1], 120.0)
+    stars[-2].los_body = _rotate_vector_arcsec(vectors[-2], 100.0)
+    cfg = _robust_attitude_cfg(min_operational=4)
+    cfg["attitude"]["outlier_reject_mode"] = "single_pass"
+    cfg["attitude"]["outlier_max_residual_arcsec"] = 30.0
+
+    sol = solve_attitude(stars, cfg)
+
+    assert sol.num_rejected >= 2
+    assert sol.quality["meta"]["robust_rejection"]["mode"] == "single_pass"
 
 
 def _random_unit_vectors(rng: np.random.Generator, count: int) -> list[np.ndarray]:

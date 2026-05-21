@@ -30,6 +30,12 @@
   - 本帧主结果。
 - `analysis.json`
   - 对误差来源做进一步分解后的结果。
+- `attitude/solution_summary.json`
+  - 姿态解算摘要，包含质量标记、支持星数、残差和四元数。
+- `attitude/covariance.json`
+  - PR19 姿态 covariance 与控制质量指标。
+- `attitude/robust_rejection.json`
+  - PR20 姿态鲁棒剔除逐轮审计，包含 rejected IDs、残差、阈值和原因。
 - `overlay_truth_candidates.png`
   - 静态 truth 与提取质心叠加图。
 - `matched_truth_bias.png`
@@ -71,7 +77,7 @@
   - 求解器迭代次数。
 - `quality`
   - 姿态解算的质量摘要，如输入星数、使用星数、残差门限和
-    `quality.meta.attitude_covariance`。
+    `quality.meta.attitude_covariance` / `quality.meta.robust_rejection`。
 - `timings_s`
   - 各阶段耗时。
 - `matching.debug.mean_residual_pix`

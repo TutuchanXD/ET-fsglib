@@ -1,8 +1,10 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 
+from fsglib.common.debug import _write_attitude_debug_artifacts
 from fsglib.common.types import AttitudeSolution, MatchedStar, MatchingResult, ObservedStar
 from fsglib.ephemeris.types import ReferenceStar
 from fsglib.pipeline import run_guide_init, run_guide_truth_noise
@@ -64,6 +66,47 @@ def test_resolve_output_dirs_keep_default_when_dataset_root_missing(tmp_path):
     assert resolve_fsg_results_root(cfg) == Path("outputs/debug")
     assert resolve_debug_output_dir(cfg) == Path("outputs/debug")
     assert resolve_figures_output_dir(cfg) == Path("outputs/debug") / "figures"
+
+
+def test_attitude_debug_artifacts_write_attitude_subdirectory(tmp_path):
+    solution_payload = {
+        "valid": True,
+        "num_matched": 8,
+        "num_rejected": 1,
+        "q_ib": [1.0, 0.0, 0.0, 0.0],
+        "residual_rms_arcsec": 0.5,
+        "residual_max_arcsec": 1.0,
+        "quality_flag": "VALID",
+        "degraded_level": "NORMAL_4D",
+        "active_detector_ids": [0, 1, 2, 3],
+        "solver_iterations": 2,
+        "covariance_rad2": [[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0]],
+        "sigma_non_roll_arcsec": 0.1,
+        "sigma_roll_arcsec": 0.2,
+        "attitude_condition_number": 3.0,
+        "quality": {
+            "meta": {
+                "attitude_covariance": {"available": True, "reason": None},
+                "robust_rejection": {
+                    "enabled": True,
+                    "mode": "sigma_clip_iterative",
+                    "num_rejected": 1,
+                    "rejected_stars": [{"catalog_id": 42, "reasons": ["sigma_clip"]}],
+                },
+            }
+        },
+    }
+
+    _write_attitude_debug_artifacts(tmp_path, solution_payload)
+
+    attitude_dir = tmp_path / "attitude"
+    assert attitude_dir.is_dir()
+    robust = json.loads((attitude_dir / "robust_rejection.json").read_text())
+    covariance = json.loads((attitude_dir / "covariance.json").read_text())
+    summary = json.loads((attitude_dir / "solution_summary.json").read_text())
+    assert robust["rejected_stars"][0]["catalog_id"] == 42
+    assert covariance["attitude_condition_number"] == 3.0
+    assert summary["quality_flag"] == "VALID"
 
 
 def test_save_matching_overlays_writes_pngs_and_summary_counts(tmp_path):

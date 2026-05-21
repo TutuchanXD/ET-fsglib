@@ -711,6 +711,58 @@ def _build_solution_payload(result: Any) -> dict[str, Any]:
     return payload
 
 
+def _write_attitude_debug_artifacts(bundle_dir: Path, solution_payload: dict[str, Any]) -> None:
+    attitude_dir = bundle_dir / "attitude"
+    attitude_dir.mkdir(parents=True, exist_ok=True)
+
+    quality = solution_payload.get("quality") or {}
+    meta = quality.get("meta") if isinstance(quality, dict) else {}
+    meta = meta if isinstance(meta, dict) else {}
+    robust_rejection = meta.get(
+        "robust_rejection",
+        {
+            "enabled": False,
+            "reason": "not_recorded",
+            "rejected_stars": [],
+            "iterations": [],
+        },
+    )
+    covariance_meta = meta.get(
+        "attitude_covariance",
+        {
+            "available": False,
+            "reason": "not_recorded",
+        },
+    )
+
+    _write_json(
+        attitude_dir / "solution_summary.json",
+        {
+            "valid": solution_payload.get("valid"),
+            "quality_flag": solution_payload.get("quality_flag"),
+            "degraded_level": solution_payload.get("degraded_level"),
+            "num_matched": solution_payload.get("num_matched"),
+            "num_rejected": solution_payload.get("num_rejected"),
+            "active_detector_ids": solution_payload.get("active_detector_ids"),
+            "solver_iterations": solution_payload.get("solver_iterations"),
+            "q_ib": solution_payload.get("q_ib"),
+            "residual_rms_arcsec": solution_payload.get("residual_rms_arcsec"),
+            "residual_max_arcsec": solution_payload.get("residual_max_arcsec"),
+        },
+    )
+    _write_json(
+        attitude_dir / "covariance.json",
+        {
+            "covariance_rad2": solution_payload.get("covariance_rad2"),
+            "sigma_non_roll_arcsec": solution_payload.get("sigma_non_roll_arcsec"),
+            "sigma_roll_arcsec": solution_payload.get("sigma_roll_arcsec"),
+            "attitude_condition_number": solution_payload.get("attitude_condition_number"),
+            "meta": covariance_meta,
+        },
+    )
+    _write_json(attitude_dir / "robust_rejection.json", robust_rejection)
+
+
 def _write_bundle_readme(bundle_dir: Path, result: Any, analysis: dict[str, Any]) -> None:
     raw = _get_field(result, "raw")
     solution = _get_field(result, "solution")
@@ -729,6 +781,9 @@ def _write_bundle_readme(bundle_dir: Path, result: Any, analysis: dict[str, Any]
         "- `matches.json`: 最终参与姿态解算的匹配对，以及 truth/预测/观测三者之间的关系。",
         "- `solution.json`: 主结果文件。",
         "- `analysis.json`: 误差分解文件，用于区分静态 truth 偏差、公共平移项、局部质心散布、匹配残差和姿态误差。",
+        "- `attitude/solution_summary.json`: 姿态解算摘要。",
+        "- `attitude/covariance.json`: 姿态 covariance 与控制质量指标。",
+        "- `attitude/robust_rejection.json`: PR20 姿态鲁棒剔除逐轮审计。",
         "- `centroid_step_audit.json`: 单星 vs 多星质心提取分步骤审计结果，重点看每一步的 `x / y / 总误差` 如何变化。",
         "- `overlay_truth_candidates.png`: 当前 truth 与提取质心叠加图。",
         "- `matched_truth_bias.png`: matched 星从当前 truth 到观测质心的偏差箭头图。",
@@ -838,6 +893,7 @@ def save_debug_bundle(result: Any, cfg: dict) -> Path | None:
     _write_json(bundle_dir / "matches.json", matches_payload)
     _write_json(bundle_dir / "solution.json", solution_payload)
     _write_json(bundle_dir / "analysis.json", analysis_payload)
+    _write_attitude_debug_artifacts(bundle_dir, solution_payload)
     evaluation = _get_field(result, "evaluation")
     if evaluation is not None and isinstance(evaluation.meta, dict):
         centroid_step_audit = evaluation.meta.get("centroid_step_audit")
