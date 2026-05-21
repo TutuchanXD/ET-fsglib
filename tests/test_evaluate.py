@@ -8,7 +8,6 @@ from fsglib.common.types import (
     DatasetContext,
     MatchedStar,
     MatchingResult,
-    ObservedStar,
     PreprocessedFrame,
     RawFrame,
     StarCandidate,

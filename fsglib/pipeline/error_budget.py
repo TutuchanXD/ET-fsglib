@@ -9,6 +9,7 @@ from fsglib.common.types import ErrorBudgetLedger, ErrorBudgetTerm
 
 
 _FAKE_ASSET_MARKERS = ("pr09_fake", "fake", "dummy", "noop", "no-op")
+_RMS_CHUNK_SIZE = 1_000_000
 
 
 def _safe_float(value: Any) -> float | None:
@@ -44,6 +45,66 @@ def _rms(value: Any) -> float | None:
     if arr.size == 0:
         return None
     return float(np.sqrt(np.mean(arr**2)))
+
+
+def _rms_sum_count(value: Any) -> tuple[float, int]:
+    if value is None:
+        return 0.0, 0
+
+    arr = np.asarray(value, dtype=np.float64).ravel()
+    total = 0.0
+    count = 0
+    for start in range(0, arr.size, _RMS_CHUNK_SIZE):
+        chunk = arr[start : start + _RMS_CHUNK_SIZE]
+        finite = np.isfinite(chunk)
+        if not np.any(finite):
+            continue
+        finite_chunk = chunk[finite]
+        total += float(np.dot(finite_chunk, finite_chunk))
+        count += int(finite_chunk.size)
+    return total, count
+
+
+def _rms_stream(value: Any) -> float | None:
+    total, count = _rms_sum_count(value)
+    if count == 0:
+        return None
+    return float(np.sqrt(total / count))
+
+
+def _rms_stream_many(values: list[Any]) -> float | None:
+    total = 0.0
+    count = 0
+    for value in values:
+        item_total, item_count = _rms_sum_count(value)
+        total += item_total
+        count += item_count
+    if count == 0:
+        return None
+    return float(np.sqrt(total / count))
+
+
+def _photon_shot_rms_from_images(values: list[Any], gain: float | None) -> float | None:
+    if gain is None:
+        return None
+
+    total_signal = 0.0
+    count = 0
+    for value in values:
+        if value is None:
+            continue
+        arr = np.asarray(value, dtype=np.float64).ravel()
+        for start in range(0, arr.size, _RMS_CHUNK_SIZE):
+            chunk = arr[start : start + _RMS_CHUNK_SIZE]
+            finite = np.isfinite(chunk)
+            if not np.any(finite):
+                continue
+            signal_e = np.maximum(chunk[finite], 0.0) * gain
+            total_signal += float(np.sum(signal_e))
+            count += int(signal_e.size)
+    if count == 0:
+        return None
+    return float(np.sqrt(total_signal / count))
 
 
 def _median(values: list[float | None]) -> float | None:
@@ -182,24 +243,6 @@ def _preprocess_meta(detector_items: list[tuple[str, Any | None, Any | None, lis
     return {}
 
 
-def _collect_noise_arrays(detector_items: list[tuple[str, Any | None, Any | None, list[Any]]]) -> list[np.ndarray]:
-    arrays = []
-    for _, _, preprocessed, _ in detector_items:
-        arr = _finite_array(getattr(preprocessed, "noise_map", None))
-        if arr.size:
-            arrays.append(arr)
-    return arrays
-
-
-def _collect_image_arrays(detector_items: list[tuple[str, Any | None, Any | None, list[Any]]]) -> list[np.ndarray]:
-    arrays = []
-    for _, _, preprocessed, _ in detector_items:
-        arr = _finite_array(getattr(preprocessed, "image", None))
-        if arr.size:
-            arrays.append(arr)
-    return arrays
-
-
 def _detector_summaries(
     detector_items: list[tuple[str, Any | None, Any | None, list[Any]]],
     observed: list[Any],
@@ -215,7 +258,7 @@ def _detector_summaries(
 
     summaries: dict[str, dict[str, Any]] = {}
     for detector_id, _, preprocessed, candidates in detector_items:
-        noise_rms = _rms(getattr(preprocessed, "noise_map", None))
+        noise_rms = _rms_stream(getattr(preprocessed, "noise_map", None))
         valid_mask = getattr(preprocessed, "valid_mask", None)
         valid_fraction = None
         if valid_mask is not None:
@@ -402,13 +445,12 @@ def build_error_budget_ledger(
     terms: list[ErrorBudgetTerm] = []
     assumptions: list[str] = []
 
-    noise_arrays = _collect_noise_arrays(detector_items)
-    aggregate_noise = np.concatenate(noise_arrays) if noise_arrays else np.zeros(0, dtype=np.float64)
+    noise_maps = [getattr(item_pre, "noise_map", None) for _, _, item_pre, _ in detector_items]
     terms.append(
         _term(
             name="detector.noise.empirical_rms",
             stage="detector",
-            value=_rms(aggregate_noise),
+            value=_rms_stream_many(noise_maps),
             unit=image_unit,
             source="PreprocessedFrame.noise_map",
             assumption="empirical robust RMS includes unresolved detector and background noise"
@@ -422,11 +464,7 @@ def build_error_budget_ledger(
         gain = _safe_float(variance_components.get("gain_e_per_output_unit"))
         read_noise = _safe_float(variance_components.get("read_noise_e"))
         quant_noise = _safe_float(variance_components.get("quantization_noise_e"))
-        image_arrays = _collect_image_arrays(detector_items)
-        signal_e = None
-        if gain is not None and image_arrays:
-            image_values = np.concatenate(image_arrays)
-            signal_e = np.maximum(image_values, 0.0) * gain
+        image_arrays = [getattr(item_pre, "image", None) for _, _, item_pre, _ in detector_items]
         terms.extend(
             [
                 _term(
@@ -446,7 +484,7 @@ def build_error_budget_ledger(
                 _term(
                     name="detector.noise.photon_shot",
                     stage="detector",
-                    value=None if signal_e is None else _rms(np.sqrt(signal_e)),
+                    value=_photon_shot_rms_from_images(image_arrays, gain),
                     unit="e-",
                     source="PreprocessedFrame.image * gain_e_per_output_unit",
                     assumption="uses calibrated nonnegative frame signal as photon-noise proxy",
@@ -703,23 +741,39 @@ def build_error_budget_ledger(
 
 def summarize_error_budget_ledgers(ledgers: list[ErrorBudgetLedger | dict[str, Any]]) -> dict[str, Any]:
     term_values: dict[str, list[tuple[float, str]]] = {}
+    num_ledgers = 0
     for ledger in ledgers:
-        payload = ledger.to_dict() if isinstance(ledger, ErrorBudgetLedger) else ledger
-        if not payload.get("enabled", False):
+        if isinstance(ledger, ErrorBudgetLedger):
+            enabled = ledger.enabled
+            terms = ledger.terms
+        else:
+            enabled = bool(ledger.get("enabled", False))
+            terms = ledger.get("terms", []) or []
+        if not enabled:
             continue
-        for term in payload.get("terms", []) or []:
+        num_ledgers += 1
+        for term in terms:
             if isinstance(term, ErrorBudgetTerm):
-                term = term.to_dict()
-            if not term.get("available", False):
-                continue
-            value = _safe_float(term.get("angular_equivalent_arcsec"))
-            unit = "arcsec"
+                if not term.available:
+                    continue
+                value = _safe_float(term.angular_equivalent_arcsec)
+                unit = "arcsec"
+                if value is None:
+                    value = _safe_float(term.value)
+                    unit = str(term.unit)
+                name = term.name
+            else:
+                if not term.get("available", False):
+                    continue
+                value = _safe_float(term.get("angular_equivalent_arcsec"))
+                unit = "arcsec"
+                if value is None:
+                    value = _safe_float(term.get("value"))
+                    unit = str(term.get("unit"))
+                name = str(term.get("name"))
             if value is None:
-                value = _safe_float(term.get("value"))
-                unit = str(term.get("unit"))
-            if value is None:
                 continue
-            term_values.setdefault(str(term.get("name")), []).append((value, unit))
+            term_values.setdefault(name, []).append((value, unit))
 
     summary_terms: dict[str, dict[str, Any]] = {}
     for name, values_with_units in sorted(term_values.items()):
@@ -734,7 +788,7 @@ def summarize_error_budget_ledgers(ledgers: list[ErrorBudgetLedger | dict[str, A
             "max": float(np.max(values)),
         }
     return {
-        "num_ledgers": int(sum(1 for ledger in ledgers if (ledger.to_dict() if isinstance(ledger, ErrorBudgetLedger) else ledger).get("enabled", False))),
+        "num_ledgers": int(num_ledgers),
         "terms": summary_terms,
     }
 

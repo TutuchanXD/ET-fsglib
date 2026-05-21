@@ -7,6 +7,7 @@ from fsglib.common.types import (
     DatasetContext,
     FrameEvaluation,
     MatchingResult,
+    ObservedStar,
     PreprocessedFrame,
     RawFrame,
     StarCandidate,
@@ -153,7 +154,7 @@ def evaluate_frame_result(
     solution,
     dataset_ctx: DatasetContext | None,
     cfg: dict | None = None,
-    observed: list | None = None,
+    observed: list[ObservedStar] | None = None,
 ) -> FrameEvaluation | None:
     truth_stars, truth_source = _resolve_truth_stars(raw, dataset_ctx)
     if not truth_stars:

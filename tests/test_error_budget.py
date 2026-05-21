@@ -47,11 +47,11 @@ def _base_inputs(variance_model: str = "empirical_robust"):
         "calibration": {
             "bias": {
                 "applied": True,
-                "path": "/home/cxgao/ET/FSG/fsglib-data/calibration/pr09_fake/2049x2049/bias_frame.npz",
+                "path": "calibration/pr09_fake/2049x2049/bias_frame.npz",
             },
             "flat": {
                 "applied": True,
-                "path": "/home/cxgao/ET/FSG/fsglib-data/calibration/pr09_fake/2049x2049/flat_field.npz",
+                "path": "calibration/pr09_fake/2049x2049/flat_field.npz",
             },
         },
         "artifact_counts": {"saturated": 3},

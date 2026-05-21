@@ -59,7 +59,7 @@ def _load_cfg(overlay: str) -> dict:
     return _deep_update(cfg, yaml.safe_load(Path(overlay).read_text(encoding="utf-8")))
 
 
-def _write_budget_outputs(prefix: str, payload: dict, budget: dict) -> dict[str, str]:
+def _write_budget_outputs(prefix: str, payload: dict, budget: dict) -> dict[str, str | None]:
     output_dir = Path("outputs/debug")
     output_dir.mkdir(parents=True, exist_ok=True)
     result_path = output_dir / f"{prefix}_result.json"
