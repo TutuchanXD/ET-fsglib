@@ -205,6 +205,30 @@ def test_sigma_clip_iterative_rejects_outlier_below_hard_gate():
     assert rejected["normalized_residual"] > 3.0
 
 
+def test_partial_config_defaults_to_sigma_clip_iterative_mode():
+    rng = np.random.default_rng(25)
+    vectors = _random_unit_vectors(rng, 9)
+    stars = _matched_identity_stars(vectors, sigma_arcsec=1.0)
+    stars[-1].los_body = _rotate_vector_arcsec(vectors[-1], 20.0)
+    cfg = _attitude_cfg(min_operational=4)
+    cfg["attitude"].update(
+        {
+            "outlier_reject_enable": True,
+            "outlier_max_residual_arcsec": 30.0,
+            "max_iterations": 5,
+        }
+    )
+
+    sol = solve_attitude(stars, cfg)
+
+    assert sol.valid
+    assert sol.num_rejected == 1
+    audit = sol.quality["meta"]["robust_rejection"]
+    assert audit["mode"] == "sigma_clip_iterative"
+    assert audit["rejected_stars"][0]["catalog_id"] == 8
+    assert "sigma_clip" in audit["rejected_stars"][0]["reasons"]
+
+
 def test_iterative_rejection_degrades_when_operational_support_is_lost():
     rng = np.random.default_rng(21)
     vectors = _random_unit_vectors(rng, 4)
@@ -269,6 +293,24 @@ def test_sigma_floor_prevents_rejecting_nominal_model_residuals():
     assert sol.valid
     assert sol.num_rejected == 0
     assert sol.quality["meta"]["robust_rejection"]["converged"] is True
+
+
+def test_partial_config_uses_documented_sigma_floor_default():
+    rng = np.random.default_rng(26)
+    vectors = _random_unit_vectors(rng, 8)
+    stars = _matched_identity_stars(vectors, sigma_arcsec=0.1)
+    for idx, star in enumerate(stars):
+        axis_hint = rng.normal(size=3)
+        star.los_body = _rotate_vector_arcsec(vectors[idx], 1.0 + 0.1 * idx, axis_hint)
+    cfg = _robust_attitude_cfg(min_operational=4)
+    cfg["attitude"].pop("outlier_sigma_floor_arcsec", None)
+
+    sol = solve_attitude(stars, cfg)
+
+    assert sol.valid
+    assert sol.num_rejected == 0
+    decision = sol.quality["meta"]["robust_rejection"]["iterations"][0]["decisions"][0]
+    assert decision["sigma_floor_arcsec"] == 2.0
 
 
 def test_single_pass_mode_keeps_legacy_all_hard_gate_rejections():

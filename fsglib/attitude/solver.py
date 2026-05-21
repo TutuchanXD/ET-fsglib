@@ -4,6 +4,12 @@ from fsglib.common.types import AttitudeQuality, AttitudeSolution, AttitudeSolve
 
 
 ARCSEC_PER_RAD = 206264.80624709636
+DEFAULT_OUTLIER_REJECT_MODE = "sigma_clip_iterative"
+DEFAULT_OUTLIER_MAX_RESIDUAL_ARCSEC = 30.0
+DEFAULT_OUTLIER_SIGMA_CLIP = 3.0
+DEFAULT_OUTLIER_SIGMA_FLOOR_ARCSEC = 2.0
+DEFAULT_OUTLIER_MAD_MIN_SIGMA_ARCSEC = 1.0e-6
+DEFAULT_MAX_ATTITUDE_ITERATIONS = 5
 
 
 def _normalize_detector_id(value) -> int | str:
@@ -198,10 +204,17 @@ def _robust_sigma_arcsec(residuals: np.ndarray, cfg: dict) -> tuple[float | None
     median = float(np.median(finite))
     mad = float(np.median(np.abs(finite - median)))
     robust_sigma = 1.4826 * mad
-    min_sigma = float(cfg.get("attitude", {}).get("outlier_mad_min_sigma_arcsec", 1.0e-6))
+    min_sigma = float(
+        cfg.get("attitude", {}).get(
+            "outlier_mad_min_sigma_arcsec",
+            DEFAULT_OUTLIER_MAD_MIN_SIGMA_ARCSEC,
+        )
+    )
     if not np.isfinite(robust_sigma) or robust_sigma <= min_sigma:
         return None, median, robust_sigma
-    clip = float(cfg.get("attitude", {}).get("outlier_sigma_clip", 3.0))
+    clip = float(
+        cfg.get("attitude", {}).get("outlier_sigma_clip", DEFAULT_OUTLIER_SIGMA_CLIP)
+    )
     return float(median + clip * robust_sigma), median, float(robust_sigma)
 
 
@@ -211,10 +224,22 @@ def _outlier_decisions(
     cfg: dict,
     mode: str,
 ) -> list[dict]:
-    hard_gate = float(cfg.get("attitude", {}).get("outlier_max_residual_arcsec", np.inf))
-    sigma_clip = float(cfg.get("attitude", {}).get("outlier_sigma_clip", np.inf))
+    hard_gate = float(
+        cfg.get("attitude", {}).get(
+            "outlier_max_residual_arcsec",
+            DEFAULT_OUTLIER_MAX_RESIDUAL_ARCSEC,
+        )
+    )
+    sigma_clip = float(
+        cfg.get("attitude", {}).get("outlier_sigma_clip", DEFAULT_OUTLIER_SIGMA_CLIP)
+    )
     use_measurement_sigma = cfg.get("attitude", {}).get("outlier_use_measurement_sigma", True)
-    sigma_floor = float(cfg.get("attitude", {}).get("outlier_sigma_floor_arcsec", 0.0))
+    sigma_floor = float(
+        cfg.get("attitude", {}).get(
+            "outlier_sigma_floor_arcsec",
+            DEFAULT_OUTLIER_SIGMA_FLOOR_ARCSEC,
+        )
+    )
     mad_threshold, mad_center, mad_sigma = _robust_sigma_arcsec(residuals, cfg)
     decisions: list[dict] = []
 
@@ -356,7 +381,7 @@ def _solve_with_robust_rejection(
     cfg: dict,
 ) -> tuple[np.ndarray, np.ndarray, list[MatchedStar], int, dict, int]:
     att_cfg = cfg.get("attitude", {})
-    mode = str(att_cfg.get("outlier_reject_mode", "single_pass")).lower()
+    mode = str(att_cfg.get("outlier_reject_mode", DEFAULT_OUTLIER_REJECT_MODE)).lower()
     if mode not in {"single_pass", "hard_gate_iterative", "sigma_clip_iterative"}:
         mode = "sigma_clip_iterative"
 
@@ -371,7 +396,7 @@ def _solve_with_robust_rejection(
         )
         return q, c, matched_stars, 0, meta, 1
 
-    max_iterations = max(1, int(att_cfg.get("max_iterations", 2)))
+    max_iterations = max(1, int(att_cfg.get("max_iterations", DEFAULT_MAX_ATTITUDE_ITERATIONS)))
     if mode == "single_pass":
         max_iterations = min(max_iterations, 2)
 
