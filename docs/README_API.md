@@ -411,8 +411,9 @@ PR13 会通过有限差分 projector Jacobian 将 `StarCandidate.centroid_cov_pi
 流程：
 
 - `solve_quest`
-- `reject_outliers`
-- 重新求解
+- PR20 iterative robust rejection：按 hard gate、带
+  `outlier_sigma_floor_arcsec` 的 `sigma_angle_arcsec` 归一化残差和 MAD
+  fallback 逐轮剔除坏匹配，并重新求解
 - 基于 matched-star `sigma_angle_arcsec` 估计小角姿态 covariance
 - 质量标记与降级等级判定
 
@@ -426,6 +427,10 @@ PR13 会通过有限差分 projector Jacobian 将 `StarCandidate.centroid_cov_pi
   `sigma_roll_arcsec` 和 `attitude_condition_number`。若 used matched stars
   中缺少 `sigma_angle_arcsec`，姿态仍会正常解算，但 covariance 字段保持
   `None`，原因写入 `quality["meta"]["attitude_covariance"]`。
+- PR20 输出 `quality["meta"]["robust_rejection"]`，记录每轮参与解算的
+  matched stars、每个 rejection 的 `detector_id/source_id/catalog_id`、
+  residual、阈值和原因。若配置了 `min_active_detectors_valid`，探测器数量不足
+  会令结果降级为 `valid=False`。
 
 ### 6.8 评估调试
 

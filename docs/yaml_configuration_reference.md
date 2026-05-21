@@ -589,10 +589,17 @@ magnitude when available, and the `weight_source`/`flux_weight` used for
 | `attitude.weight_mode` | string | `variance_snr_hybrid` | active | Controls how `ObservedStar.weight` is populated before matching: `snr`, `centroid_variance`, or `variance_snr_hybrid`. `sigma_angle_arcsec` is recorded regardless of mode when centroid covariance is available. |
 | `attitude.estimate_covariance` | bool | `true` | active | Enables PR19 small-angle attitude covariance estimation from matched-star `sigma_angle_arcsec`. If any used matched star lacks sigma, the attitude is still solved but covariance output is marked unavailable instead of fabricating uncertainty. |
 | `attitude.covariance_rank_tol` | float | `1e-12` | active | Relative eigenvalue tolerance for declaring the attitude covariance normal matrix singular or ill-conditioned. |
-| `attitude.outlier_reject_enable` | bool | `true` | active | Enables one-pass residual-gate outlier rejection. |
-| `attitude.outlier_max_residual_arcsec` | float | `30.0` | active | Residual gate for outlier rejection and final validity. |
-| `attitude.outlier_sigma_clip` | float | `3.0` | reserved | Sigma-clipping outlier rejection is not implemented. |
-| `attitude.max_iterations` | int | `2` | reserved | Iterative multi-pass outlier rejection is not implemented. |
+| `attitude.outlier_reject_enable` | bool | `true` | active | Enables PR20 robust matched-star rejection before final attitude quality is accepted. |
+| `attitude.outlier_reject_mode` | string | `sigma_clip_iterative` | active | Robust rejection mode: `single_pass`, `hard_gate_iterative`, or `sigma_clip_iterative`. |
+| `attitude.outlier_max_residual_arcsec` | float | `30.0` | active | Absolute residual hard gate for outlier rejection and final validity. |
+| `attitude.outlier_sigma_clip` | float | `3.0` | active | Sigma-clipping threshold used by `sigma_clip_iterative`; measurement sigma is preferred when matched-star `sigma_angle_arcsec` exists. |
+| `attitude.outlier_use_measurement_sigma` | bool | `true` | active | Uses per-star `sigma_angle_arcsec` for normalized residual rejection when available. |
+| `attitude.outlier_sigma_floor_arcsec` | float | `2.0` | active | Minimum sigma used for normalized residual rejection, covering projection/model/catalog residuals not represented by centroid-only sigma. |
+| `attitude.outlier_mad_fallback_enable` | bool | `true` | active | Uses residual median/MAD sigma clipping for stars without measurement sigma. |
+| `attitude.outlier_mad_min_sigma_arcsec` | float | `1e-6` | active | Minimum robust residual sigma required before the MAD fallback can reject stars. |
+| `attitude.outlier_max_reject_per_iteration` | int | `1` | active | Maximum matched stars to reject per robust iteration; `<=0` allows all current outliers to be rejected together. |
+| `attitude.min_active_detectors_valid` | int/null | `null` | active | Optional minimum active detector count required for `VALID`; null records detector diversity without enforcing a hard detector-diversity gate. |
+| `attitude.max_iterations` | int | `5` | active | Maximum robust solve/rejection iterations for PR20 attitude validation. |
 | `attitude.quest_tol` | float | `1e-12` | active | Newton tolerance for QUEST characteristic-root solve. Not written in `base.yaml` yet. |
 | `attitude.quest_max_iter` | int | `50` | active | Maximum QUEST Newton iterations. Not written in `base.yaml` yet. |
 
@@ -722,8 +729,6 @@ behavior:
 - `ephemeris.enable_dva`
 - `ephemeris.enable_relativity`
 - `attitude.solver` beyond `quest`
-- `attitude.outlier_sigma_clip`
-- `attitude.max_iterations`
 - `metrics.*`
 - `logging.level`
 - `logging.save_source_catalog`
