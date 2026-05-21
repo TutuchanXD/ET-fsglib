@@ -93,6 +93,10 @@ class AttitudeSolution:
     degraded_level: str = "UNKNOWN"
     active_detector_ids: list[int] = field(default_factory=list)
     solver_iterations: int = 0
+    covariance_rad2: np.ndarray | None = None
+    sigma_non_roll_arcsec: float | None = None
+    sigma_roll_arcsec: float | None = None
+    attitude_condition_number: float | None = None
 
 @dataclass
 class TruthStar:

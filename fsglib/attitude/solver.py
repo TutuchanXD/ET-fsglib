@@ -3,6 +3,9 @@ from scipy.spatial.transform import Rotation
 from fsglib.common.types import AttitudeQuality, AttitudeSolution, AttitudeSolveInput, MatchedStar
 
 
+ARCSEC_PER_RAD = 206264.80624709636
+
+
 def _normalize_detector_id(value) -> int | str:
     try:
         return int(value)
@@ -66,6 +69,111 @@ def compute_weights(
         return np.zeros(0, dtype=np.float64)
     weights = np.array([max(float(star.weight), 1e-6) for star in matched_stars], dtype=np.float64)
     return weights
+
+
+def _sigma_angle_arcsec(star: MatchedStar) -> float | None:
+    value = star.flags.get("sigma_angle_arcsec")
+    if value is None:
+        return None
+    try:
+        sigma = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(sigma) or sigma <= 0.0:
+        return None
+    return sigma
+
+
+def _empty_covariance_meta(reason: str, matched_stars: list[MatchedStar]) -> dict:
+    return {
+        "available": False,
+        "reason": reason,
+        "source": None,
+        "num_used": len(matched_stars),
+        "missing_sigma_count": sum(
+            1 for star in matched_stars if _sigma_angle_arcsec(star) is None
+        ),
+    }
+
+
+def _attitude_covariance_from_sigmas(
+    matched_stars: list[MatchedStar],
+    cfg: dict,
+) -> tuple[np.ndarray | None, float | None, float | None, float | None, dict]:
+    if not cfg.get("attitude", {}).get("estimate_covariance", True):
+        return None, None, None, None, _empty_covariance_meta(
+            "disabled",
+            matched_stars,
+        )
+    if not matched_stars:
+        return None, None, None, None, _empty_covariance_meta(
+            "not_enough_stars",
+            matched_stars,
+        )
+
+    sigmas_arcsec = [_sigma_angle_arcsec(star) for star in matched_stars]
+    missing_count = sum(sigma is None for sigma in sigmas_arcsec)
+    if missing_count:
+        meta = _empty_covariance_meta("missing_sigma_angle_arcsec", matched_stars)
+        meta["sigma_angle_arcsec"] = sigmas_arcsec
+        return None, None, None, None, meta
+
+    normal = np.zeros((3, 3), dtype=np.float64)
+    for star, sigma_arcsec in zip(matched_stars, sigmas_arcsec):
+        los = np.asarray(star.los_body, dtype=np.float64)
+        norm = float(np.linalg.norm(los))
+        if los.shape != (3,) or not np.isfinite(norm) or norm <= 0.0:
+            meta = _empty_covariance_meta("invalid_los_body", matched_stars)
+            meta["sigma_angle_arcsec"] = sigmas_arcsec
+            return None, None, None, None, meta
+        los = los / norm
+        sigma_rad = float(sigma_arcsec) / ARCSEC_PER_RAD
+        tangent_projector = np.eye(3, dtype=np.float64) - np.outer(los, los)
+        normal += tangent_projector / max(sigma_rad**2, 1e-30)
+
+    normal = 0.5 * (normal + normal.T)
+    eigvals, eigvecs = np.linalg.eigh(normal)
+    max_eig = float(np.max(eigvals)) if eigvals.size else 0.0
+    rank_tol = float(cfg.get("attitude", {}).get("covariance_rank_tol", 1.0e-12))
+    min_allowed = max(max_eig * rank_tol, 1e-30)
+    if max_eig <= 0.0 or float(np.min(eigvals)) <= min_allowed:
+        meta = _empty_covariance_meta("singular_attitude_normal_matrix", matched_stars)
+        meta.update(
+            {
+                "sigma_angle_arcsec": sigmas_arcsec,
+                "normal_eigenvalues": eigvals.tolist(),
+            }
+        )
+        return None, None, None, None, meta
+
+    covariance = eigvecs @ np.diag(1.0 / eigvals) @ eigvecs.T
+    covariance = 0.5 * (covariance + covariance.T)
+    if not np.all(np.isfinite(covariance)):
+        meta = _empty_covariance_meta("nonfinite_attitude_covariance", matched_stars)
+        meta["sigma_angle_arcsec"] = sigmas_arcsec
+        return None, None, None, None, meta
+
+    condition_number = float(max_eig / float(np.min(eigvals)))
+    sigma_non_roll_arcsec = float(
+        np.sqrt(max(float(covariance[0, 0] + covariance[1, 1]), 0.0))
+        * ARCSEC_PER_RAD
+    )
+    sigma_roll_arcsec = float(
+        np.sqrt(max(float(covariance[2, 2]), 0.0)) * ARCSEC_PER_RAD
+    )
+    meta = {
+        "available": True,
+        "reason": None,
+        "source": "sigma_angle_arcsec",
+        "num_used": len(matched_stars),
+        "missing_sigma_count": 0,
+        "sigma_angle_arcsec": [float(sigma) for sigma in sigmas_arcsec],
+        "normal_eigenvalues": eigvals.tolist(),
+        "condition_number": condition_number,
+        "sigma_non_roll_arcsec": sigma_non_roll_arcsec,
+        "sigma_roll_arcsec": sigma_roll_arcsec,
+    }
+    return covariance, sigma_non_roll_arcsec, sigma_roll_arcsec, condition_number, meta
 
 
 def _build_b_matrix(
@@ -260,6 +368,14 @@ def solve_attitude(
     )
     degraded = not valid and len(matched_used) >= min_stars
     quality_flag = "VALID" if valid else ("DEGRADED" if degraded else "LOST")
+    weights_used = compute_weights(matched_used, cfg)
+    (
+        covariance_rad2,
+        sigma_non_roll_arcsec,
+        sigma_roll_arcsec,
+        attitude_condition_number,
+        covariance_meta,
+    ) = _attitude_covariance_from_sigmas(matched_used, cfg)
     quality = AttitudeQuality(
         num_input=len(matched_stars),
         num_used=len(matched_used),
@@ -272,13 +388,29 @@ def solve_attitude(
             "active_detector_ids": active_detector_ids,
             "quality_flag": quality_flag,
             "weight_mode": cfg.get("attitude", {}).get("weight_mode", "variance_snr_hybrid"),
-            "effective_weights": [float(m.weight) for m in matched_used],
+            "effective_weights": [float(weight) for weight in weights_used],
             "sigma_angle_arcsec": [
                 m.flags.get("sigma_angle_arcsec") for m in matched_used
             ],
             "weight_sources": [m.flags.get("weight_source") for m in matched_used],
+            "attitude_covariance": covariance_meta,
         },
     )
+    quality_payload = {
+        "num_input": quality.num_input,
+        "num_used": quality.num_used,
+        "num_rejected": quality.num_rejected,
+        "degraded": quality.degraded,
+        "mode": quality.mode,
+        "residual_gate_arcsec": residual_gate,
+        "meta": quality.meta,
+        "covariance_rad2": (
+            covariance_rad2.tolist() if covariance_rad2 is not None else None
+        ),
+        "sigma_non_roll_arcsec": sigma_non_roll_arcsec,
+        "sigma_roll_arcsec": sigma_roll_arcsec,
+        "attitude_condition_number": attitude_condition_number,
+    }
 
     return AttitudeSolution(
         q_ib=q_ib,
@@ -289,17 +421,14 @@ def solve_attitude(
         num_matched=len(matched_used),
         residual_rms_arcsec=rms,
         residual_max_arcsec=rmax,
-        quality={
-            "num_input": quality.num_input,
-            "num_used": quality.num_used,
-            "num_rejected": quality.num_rejected,
-            "degraded": quality.degraded,
-            "mode": quality.mode,
-            "residual_gate_arcsec": residual_gate,
-        },
+        quality=quality_payload,
         num_rejected=num_rejected,
         quality_flag=quality_flag,
         degraded_level=degraded_level,
         active_detector_ids=active_detector_ids,
         solver_iterations=2 if num_rejected > 0 else 1,
+        covariance_rad2=covariance_rad2,
+        sigma_non_roll_arcsec=sigma_non_roll_arcsec,
+        sigma_roll_arcsec=sigma_roll_arcsec,
+        attitude_condition_number=attitude_condition_number,
     )

@@ -587,6 +587,8 @@ magnitude when available, and the `weight_source`/`flux_weight` used for
 | `attitude.min_stars_mathematical` | int | `2` | active | Minimum matched stars required to attempt attitude solving. |
 | `attitude.min_stars_operational` | int | `4` | active | Minimum matched stars required for a `VALID` attitude solution. |
 | `attitude.weight_mode` | string | `variance_snr_hybrid` | active | Controls how `ObservedStar.weight` is populated before matching: `snr`, `centroid_variance`, or `variance_snr_hybrid`. `sigma_angle_arcsec` is recorded regardless of mode when centroid covariance is available. |
+| `attitude.estimate_covariance` | bool | `true` | active | Enables PR19 small-angle attitude covariance estimation from matched-star `sigma_angle_arcsec`. If any used matched star lacks sigma, the attitude is still solved but covariance output is marked unavailable instead of fabricating uncertainty. |
+| `attitude.covariance_rank_tol` | float | `1e-12` | active | Relative eigenvalue tolerance for declaring the attitude covariance normal matrix singular or ill-conditioned. |
 | `attitude.outlier_reject_enable` | bool | `true` | active | Enables one-pass residual-gate outlier rejection. |
 | `attitude.outlier_max_residual_arcsec` | float | `30.0` | active | Residual gate for outlier rejection and final validity. |
 | `attitude.outlier_sigma_clip` | float | `3.0` | reserved | Sigma-clipping outlier rejection is not implemented. |

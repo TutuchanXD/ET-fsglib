@@ -153,6 +153,8 @@ attitude:
   min_stars_mathematical: 2
   min_stars_operational: 4
   weight_mode: variance_snr_hybrid
+  estimate_covariance: true
+  covariance_rank_tol: 1.0e-12
   outlier_reject_enable: true
   outlier_max_residual_arcsec: 30.0
   outlier_sigma_clip: 3.0

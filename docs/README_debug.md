@@ -49,6 +49,14 @@
   - 姿态求解阶段剔除的星数。
 - `q_ib`
   - 四元数 `[w, x, y, z]`，表示惯性系到本体系的旋转。
+- `covariance_rad2`
+  - PR19 小角姿态 covariance，单位 rad²；缺少 matched-star sigma 时为 null。
+- `sigma_non_roll_arcsec`
+  - 光轴指向二维 1-sigma 不确定度，单位角秒。
+- `sigma_roll_arcsec`
+  - 绕 body `+Z` 光轴滚转 1-sigma 不确定度，单位角秒。
+- `attitude_condition_number`
+  - 姿态 covariance normal matrix 的条件数。
 - `residual_rms_arcsec`
   - 姿态解算后，matched 星方向矢量残差的 RMS，单位角秒。
 - `residual_max_arcsec`
@@ -62,7 +70,8 @@
 - `solver_iterations`
   - 求解器迭代次数。
 - `quality`
-  - 姿态解算的质量摘要，如输入星数、使用星数、残差门限。
+  - 姿态解算的质量摘要，如输入星数、使用星数、残差门限和
+    `quality.meta.attitude_covariance`。
 - `timings_s`
   - 各阶段耗时。
 - `matching.debug.mean_residual_pix`

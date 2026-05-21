@@ -413,6 +413,7 @@ PR13 会通过有限差分 projector Jacobian 将 `StarCandidate.centroid_cov_pi
 - `solve_quest`
 - `reject_outliers`
 - 重新求解
+- 基于 matched-star `sigma_angle_arcsec` 估计小角姿态 covariance
 - 质量标记与降级等级判定
 
 约定：
@@ -421,6 +422,10 @@ PR13 会通过有限差分 projector Jacobian 将 `StarCandidate.centroid_cov_pi
 - `q_ib` / `c_ib` 表示惯性系到本体系；
 - `quality_flag` 当前主要取 `VALID`、`DEGRADED`、`LOST`、`INVALID`；
 - `degraded_level` 由有效 detector 数量给出。
+- PR19 输出 `covariance_rad2`、`sigma_non_roll_arcsec`、
+  `sigma_roll_arcsec` 和 `attitude_condition_number`。若 used matched stars
+  中缺少 `sigma_angle_arcsec`，姿态仍会正常解算，但 covariance 字段保持
+  `None`，原因写入 `quality["meta"]["attitude_covariance"]`。
 
 ### 6.8 评估调试
 
