@@ -177,7 +177,7 @@ def run_single_frame_init(
     timings["attitude"] = perf_counter() - t0
 
     t0 = perf_counter()
-    evaluation = evaluate_frame_result(raw, pre, cand, matching, solution, dataset_ctx, cfg=cfg)
+    evaluation = evaluate_frame_result(raw, pre, cand, matching, solution, dataset_ctx, cfg=cfg, observed=obs)
     timings["evaluate"] = perf_counter() - t0
     timings["total"] = perf_counter() - total_start
 

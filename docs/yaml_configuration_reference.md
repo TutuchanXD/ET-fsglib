@@ -620,6 +620,24 @@ magnitude when available, and the `weight_source`/`flux_weight` used for
 | `evaluation.frame_stride` | int | `1` | active | Frame stride for dataset evaluation. |
 | `evaluation.max_frames_per_batch` | int or null | `null` | active | Optional cap on evaluated frames per batch. |
 
+### `evaluation.error_budget`
+
+| Key | Type | Default | Status | Description |
+|-----|------|---------|--------|-------------|
+| `evaluation.error_budget.enabled` | bool | `true` | active | Enables the PR21 detector-to-attitude error-budget ledger. |
+| `evaluation.error_budget.output_json` | bool | `true` | active | Writes `validation/error_budget.json` in debug bundles when an error budget is present. |
+| `evaluation.error_budget.output_csv` | bool | `true` | active | Writes `validation/error_budget_terms.csv` with one row per ledger term. |
+| `evaluation.error_budget.max_per_star_records` | int or null | `null` | active | Optional cap for matched-star detail records in the ledger. Null keeps all matched stars. |
+| `evaluation.error_budget.catalog_uncertainty_arcsec` | float or null | `null` | active | Optional catalog/reference angular uncertainty prior. Null records the catalog term as unavailable instead of assuming zero. |
+| `evaluation.error_budget.optical_alignment_residual_arcsec` | float or null | `null` | active | Optional optical alignment/distortion residual prior. Null records the optics term as unavailable instead of assuming zero. |
+| `evaluation.error_budget.aggregate_percentiles` | list[int] | `[50, 95, 99]` | declared | Percentile intent for downstream aggregate reports; current code emits p50/p95/max summaries. |
+
+The ledger records each term with `name`, `stage`, `value`, `unit`, `source`,
+`assumption`, `available`, `reason`, and optional angular-equivalent value in
+arcsec. When the current configuration cannot support a physical decomposition
+for a term, the ledger marks that term unavailable with a reason. It does not
+fill missing physical noise terms with zero.
+
 ### `evaluation.centroid_step_audit`
 
 | Key | Type | Default | Status | Description |

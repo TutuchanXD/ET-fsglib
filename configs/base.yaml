@@ -177,6 +177,14 @@ evaluation:
   batch_glob: "batch*"
   frame_stride: 1
   max_frames_per_batch: null
+  error_budget:
+    enabled: true
+    output_json: true
+    output_csv: true
+    max_per_star_records: null
+    catalog_uncertainty_arcsec: null
+    optical_alignment_residual_arcsec: null
+    aggregate_percentiles: [50, 95, 99]
   centroid_step_audit:
     enabled: false
     stamp_size: 31

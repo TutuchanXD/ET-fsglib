@@ -224,6 +224,73 @@ class FrameEvaluation:
     centroid_rms_dx_pix: float | None = None
     centroid_rms_dy_pix: float | None = None
     meta: dict = field(default_factory=dict)
+    error_budget: "ErrorBudgetLedger | None" = None
+
+
+@dataclass
+class ErrorBudgetTerm:
+    name: str
+    stage: str
+    value: float | int | None
+    unit: str
+    source: str | None
+    assumption: str | None = None
+    scope: str = "frame"
+    detector_id: int | str | None = None
+    star_id: int | str | None = None
+    available: bool = True
+    reason: str | None = None
+    angular_equivalent_arcsec: float | None = None
+    meta: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "stage": self.stage,
+            "value": self.value,
+            "unit": self.unit,
+            "source": self.source,
+            "assumption": self.assumption,
+            "scope": self.scope,
+            "detector_id": self.detector_id,
+            "star_id": self.star_id,
+            "available": self.available,
+            "reason": self.reason,
+            "angular_equivalent_arcsec": self.angular_equivalent_arcsec,
+            "meta": self.meta,
+        }
+
+
+@dataclass
+class ErrorBudgetLedger:
+    enabled: bool
+    frame_id: str | None
+    schema_version: int = 1
+    terms: list[ErrorBudgetTerm] = field(default_factory=list)
+    summary: dict = field(default_factory=dict)
+    per_detector: dict[str, dict] = field(default_factory=dict)
+    per_star: list[dict] = field(default_factory=list)
+    assumptions: list[str] = field(default_factory=list)
+
+    def to_dict(
+        self,
+        *,
+        include_terms: bool = True,
+        include_per_star: bool = True,
+    ) -> dict:
+        payload = {
+            "enabled": self.enabled,
+            "frame_id": self.frame_id,
+            "schema_version": self.schema_version,
+            "summary": self.summary,
+            "per_detector": self.per_detector,
+            "assumptions": self.assumptions,
+        }
+        if include_terms:
+            payload["terms"] = [term.to_dict() for term in self.terms]
+        if include_per_star:
+            payload["per_star"] = self.per_star
+        return payload
 
 @dataclass
 class FrameResult:

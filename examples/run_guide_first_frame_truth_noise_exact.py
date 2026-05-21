@@ -17,6 +17,7 @@
 
 import json
 import sys
+import csv
 from pathlib import Path
 
 import yaml
@@ -24,7 +25,12 @@ import yaml
 # Add the parent directory of fsglib to python path so we can run this directly
 sys.path.append(str(Path(__file__).parent.parent))
 
+from _smoke_resources import configure_smoke_process
+
+RESOURCE_LIMITS = configure_smoke_process(default_memory_gb=16.0, default_cpu_seconds=300)
+
 from fsglib.pipeline import run_guide_first_frame_truth_noise
+from fsglib.pipeline.error_budget import error_budget_csv_rows
 
 
 def _deep_update(base: dict, override: dict) -> dict:
@@ -48,6 +54,16 @@ def _geometry_summary_lines(geometry_adapter: dict) -> list[str]:
     ]
 
 
+def _write_error_budget_csv(path: Path, error_budget: dict) -> None:
+    rows = error_budget_csv_rows(error_budget)
+    if not rows:
+        return
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def main() -> None:
     base_cfg_path = Path("configs/base.yaml")
     guide_cfg_path = Path("configs/guide_truth_noise_0065pix_exact_etcoord.yaml")
@@ -64,6 +80,7 @@ def main() -> None:
     print("----------------------------------------")
     print("Guide First Frame Truth-Noise Exact Solve:")
     print("----------------------------------------")
+    print(f"Resource limits: {RESOURCE_LIMITS}")
     print(f"Centroid model: {synth['mode']}")
     print(
         "Noise assumption: dx,dy ~ N({mean:.4f}, {sigma:.4f}^2) pix in {space}".format(
@@ -143,6 +160,8 @@ def main() -> None:
 
     output_path = Path("outputs/debug/guide_first_frame_truth_noise_0065pix_exact_etcoord_result.json")
     audit_path = Path("outputs/debug/guide_first_frame_truth_noise_0065pix_exact_etcoord_error_audit.json")
+    budget_path = Path("outputs/debug/guide_first_frame_truth_noise_0065pix_exact_etcoord_error_budget.json")
+    budget_csv_path = Path("outputs/debug/guide_first_frame_truth_noise_0065pix_exact_etcoord_error_budget_terms.csv")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     audit_path.parent.mkdir(parents=True, exist_ok=True)
     error_audit = result["error_audit"]
@@ -182,12 +201,19 @@ def main() -> None:
         "synthetic_centroid_model": result["synthetic_centroid_model"],
         "error_audit": error_audit_summary,
         "error_audit_detail_path": str(audit_path),
+        "error_budget": result["error_budget"],
+        "error_budget_detail_path": str(budget_path),
+        "error_budget_terms_csv_path": str(budget_csv_path),
         "meta": result["meta"],
     }
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     audit_path.write_text(json.dumps(error_audit, indent=2), encoding="utf-8")
+    budget_path.write_text(json.dumps(result["error_budget"], indent=2), encoding="utf-8")
+    _write_error_budget_csv(budget_csv_path, result["error_budget"])
     print(f"Result JSON: {output_path}")
     print(f"Error audit JSON: {audit_path}")
+    print(f"Error budget JSON: {budget_path}")
+    print(f"Error budget CSV: {budget_csv_path}")
 
 
 if __name__ == "__main__":

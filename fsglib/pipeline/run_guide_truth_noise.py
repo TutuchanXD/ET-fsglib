@@ -12,6 +12,7 @@ from fsglib.common.types import AttitudeSolveInput, MatchingContext, ObservedSta
 from fsglib.ephemeris.guide_geometry import build_exact_focalplane_geometry_adapter
 from fsglib.match.pipeline import match_stars
 from fsglib.pipeline.convert import observed_weight_from_sigma, propagate_centroid_covariance
+from fsglib.pipeline.error_budget import build_error_budget_ledger
 from fsglib.pipeline.guide_error_audit import compute_guide_error_audit
 from fsglib.pipeline.run_guide_init import (
     _build_reference_stars,
@@ -319,6 +320,18 @@ def run_guide_first_frame_truth_noise(cfg: dict) -> dict:
         matching,
         solution,
     )
+    error_budget = build_error_budget_ledger(
+        raw=None,
+        preprocessed=None,
+        candidates=[],
+        observed=observed,
+        matching=matching,
+        solution=solution,
+        evaluation=None,
+        dataset_ctx=None,
+        cfg=helper_cfg,
+        detector_contexts=detector_contexts,
+    )
 
     matched_per_detector: dict[str, int] = {}
     for matched_star in matching.matched:
@@ -383,6 +396,7 @@ def run_guide_first_frame_truth_noise(cfg: dict) -> dict:
             "los_geometry_mode": str(guide_cfg.get("los_geometry_mode", "exact_et_focalplane")),
         },
         "error_audit": error_audit,
+        "error_budget": error_budget.to_dict(),
         "meta": {
             "dataset_root": str(dataset_root),
             "frame_index": int(guide_cfg.get("frame_index", 0)),
