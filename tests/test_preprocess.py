@@ -88,6 +88,34 @@ def test_preprocess_applies_ordered_detector_calibration_chain():
     assert pre.preprocess_meta["num_invalid_pixels"] == 1
 
 
+def test_preprocess_converts_adu_to_electrons_with_global_gain():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[2.2, 4.4, 6.6]], dtype=np.float64),
+        time_s=0.0,
+        unit="adu",
+    )
+    cfg = _preprocess_cfg(
+        convert_to_electrons=True,
+        gain_e_per_dn=1.0 / 2.2,
+    )
+
+    pre = preprocess_frame(raw, calib={}, cfg=cfg)
+
+    assert np.allclose(pre.image, [[1.0, 2.0, 3.0]])
+    assert pre.preprocess_meta["input_unit"] == "adu"
+    assert pre.preprocess_meta["output_unit"] == "electron"
+    assert pre.preprocess_meta["noise_unit"] == "electron"
+    assert pre.preprocess_meta["variance_unit"] == "electron^2"
+    assert pre.preprocess_meta["adu_to_electron_conversion"] == {
+        "enabled": True,
+        "applied": True,
+        "input_unit": "adu",
+        "output_unit": "electron",
+        "gain_e_per_dn": 1.0 / 2.2,
+    }
+
+
 def test_preprocess_adc_clip_clips_to_configured_bit_depth_without_masking():
     raw = RawFrame(
         detector_id=0,

@@ -175,6 +175,15 @@ def _unit_is_electron(unit: str | None) -> bool:
     return str(unit).strip().lower() in _ELECTRON_UNITS
 
 
+def _gain_e_per_image_unit(unit: str | None, cfg: dict) -> float:
+    if _unit_is_electron(unit):
+        return 1.0
+    return _positive_float(
+        _preprocess_cfg(cfg).get("gain_e_per_dn"),
+        "gain_e_per_dn",
+    )
+
+
 def _variance_unit(unit: str | None) -> str:
     if unit is None:
         return "image_unit^2"
@@ -441,17 +450,12 @@ def _poisson_read_noise_variance_map(
     flat_response_for_variance: np.ndarray | None,
     valid_mask: np.ndarray,
     raw: RawFrame,
+    output_unit: str | None,
     dark_current_map: np.ndarray | None,
     cfg: dict,
 ) -> tuple[np.ndarray, dict]:
     preprocess_cfg = _preprocess_cfg(cfg)
-    if _unit_is_electron(raw.unit):
-        gain_e_per_output_unit = 1.0
-    else:
-        gain_e_per_output_unit = _positive_float(
-            preprocess_cfg.get("gain_e_per_dn"),
-            "gain_e_per_dn",
-        )
+    gain_e_per_output_unit = _gain_e_per_image_unit(output_unit, cfg)
     read_noise_e = _required_nonnegative_float(
         preprocess_cfg.get("read_noise_e"),
         "read_noise_e",
@@ -521,6 +525,7 @@ def _estimate_variance_and_noise(
     flat_response_for_variance: np.ndarray | None,
     valid_mask: np.ndarray,
     raw: RawFrame,
+    output_unit: str | None,
     dark_current_map: np.ndarray | None,
     cfg: dict,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
@@ -536,6 +541,7 @@ def _estimate_variance_and_noise(
             flat_response_for_variance,
             valid_mask,
             raw,
+            output_unit,
             dark_current_map,
             cfg,
         )
@@ -546,8 +552,8 @@ def _estimate_variance_and_noise(
     meta = {
         "variance_model_configured": model,
         "variance_model_effective": model,
-        "variance_unit": _variance_unit(raw.unit),
-        "noise_unit": raw.unit or "image_unit",
+        "variance_unit": _variance_unit(output_unit),
+        "noise_unit": output_unit or "image_unit",
         "variance_components": details,
     }
     return variance_map, noise_map, meta
@@ -558,6 +564,7 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
     image = np.asarray(raw.image, dtype=np.float64).copy()
     valid_mask = np.isfinite(image)
     image_shape = image.shape
+    output_unit = raw.unit
     dark_current_map = None
     artifact_masks: dict[str, np.ndarray] = {}
 
@@ -576,7 +583,7 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
 
     preprocess_meta = {
         "input_unit": raw.unit,
-        "output_unit": raw.unit,
+        "output_unit": output_unit,
         "raw_image_shape": tuple(image_shape),
         "calibration_order": list(_CALIBRATION_ORDER),
         "calibration": {},
@@ -716,6 +723,33 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
             applied=False,
         )
 
+    conversion_enabled = bool(preprocess_cfg.get("convert_to_electrons", False))
+    conversion_meta = {
+        "enabled": conversion_enabled,
+        "applied": False,
+        "input_unit": raw.unit,
+        "output_unit": output_unit,
+    }
+    if conversion_enabled:
+        gain_e_per_dn = _gain_e_per_image_unit(raw.unit, cfg)
+        conversion_meta["gain_e_per_dn"] = float(gain_e_per_dn)
+        if _unit_is_electron(raw.unit):
+            output_unit = "electron"
+            conversion_meta["output_unit"] = output_unit
+            conversion_meta["reason"] = "input_already_electron"
+        else:
+            photon_noise_aliases_image = image_for_photon_noise is image
+            image *= gain_e_per_dn
+            if not photon_noise_aliases_image:
+                image_for_photon_noise *= gain_e_per_dn
+            if dark_current_map is not None:
+                dark_current_map = dark_current_map * gain_e_per_dn
+            output_unit = "electron"
+            conversion_meta["applied"] = True
+            conversion_meta["output_unit"] = output_unit
+    preprocess_meta["output_unit"] = output_unit
+    preprocess_meta["adu_to_electron_conversion"] = conversion_meta
+
     image = np.where(valid_mask, image, 0.0)
 
     if preprocess_cfg.get("enable_background_subtraction", True):
@@ -737,6 +771,7 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
         flat_response_for_variance,
         valid_mask,
         raw,
+        output_unit,
         dark_current_map,
         cfg,
     )
