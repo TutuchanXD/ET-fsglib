@@ -17,6 +17,11 @@ from fsglib.ephemeris.pipeline import reference_weight_from_magnitudes
 from fsglib.ephemeris.types import ReferenceStar
 from fsglib.extract.pipeline import extract_stars
 from fsglib.match.pipeline import match_stars
+from fsglib.pipeline.convert import (
+    observed_weight_from_sigma,
+    propagate_centroid_covariance,
+)
+from fsglib.pipeline.error_budget import build_error_budget_ledger
 from fsglib.pipeline.guide_error_audit import compute_guide_error_audit
 from fsglib.preprocess.calibration import load_calibration_products
 from fsglib.preprocess.pipeline import preprocess_frame
@@ -148,6 +153,24 @@ def _apply_sim_to_detector_map(x_pix: float, y_pix: float, mapping: dict) -> tup
     return x_et, y_et
 
 
+def _apply_sim_to_detector_covariance(cov_pix, mapping: dict):
+    if cov_pix is None:
+        return None
+    cov = np.asarray(cov_pix, dtype=np.float64)
+    if cov.shape != (2, 2) or not np.all(np.isfinite(cov)):
+        return None
+    if mapping["kind"] == "offset":
+        return cov
+    transform = np.array(
+        [
+            [float(mapping["x_coeffs"][0]), float(mapping["x_coeffs"][1])],
+            [float(mapping["y_coeffs"][0]), float(mapping["y_coeffs"][1])],
+        ],
+        dtype=np.float64,
+    )
+    return transform @ cov @ transform.T
+
+
 def _select_candidates_for_attitude(candidates: list, cfg: dict) -> list:
     max_per_detector = cfg.get("guide_init", {}).get("max_observed_per_detector")
     if max_per_detector is None:
@@ -213,7 +236,24 @@ def _build_observed_stars(
         mapping = sim_to_detector_map[detector_id]
         for candidate in candidates:
             x_et, y_et = _apply_sim_to_detector_map(candidate.x, candidate.y, mapping)
+            centroid_cov_pix = _apply_sim_to_detector_covariance(
+                getattr(candidate, "centroid_cov_pix", None),
+                mapping,
+            )
             transformed = geometry_adapter.pixel_to_focal(detector_id, x_et, y_et)
+            los_cov_body, sigma_angle_arcsec = propagate_centroid_covariance(
+                geometry_adapter,
+                detector_id,
+                x_et,
+                y_et,
+                centroid_cov_pix,
+                cfg,
+            )
+            weight, weight_flags = observed_weight_from_sigma(
+                candidate.snr,
+                sigma_angle_arcsec,
+                cfg,
+            )
             observed.append(
                 ObservedStar(
                     detector_id=detector_id,
@@ -223,9 +263,14 @@ def _build_observed_stars(
                     los_body=geometry_adapter.pixel_to_body_los(detector_id, x_et, y_et),
                     flux=candidate.flux,
                     snr=candidate.snr,
-                    weight=max(candidate.snr, 1.0),
+                    weight=weight,
+                    centroid_cov_pix=centroid_cov_pix,
+                    los_cov_body=los_cov_body,
+                    sigma_angle_arcsec=sigma_angle_arcsec,
                     flags={
                         **candidate.flags,
+                        **weight_flags,
+                        "sigma_angle_arcsec": sigma_angle_arcsec,
                         "sim_x_pix": float(candidate.x),
                         "sim_y_pix": float(candidate.y),
                         "et_x_pix": x_et,
@@ -383,6 +428,18 @@ def run_guide_first_frame_init(cfg: dict, *, include_debug_context: bool = False
         matching,
         solution,
     )
+    error_budget = build_error_budget_ledger(
+        raw=None,
+        preprocessed=None,
+        candidates=[],
+        observed=observed,
+        matching=matching,
+        solution=solution,
+        evaluation=None,
+        dataset_ctx=None,
+        cfg=cfg,
+        detector_contexts=detector_contexts,
+    )
 
     matched_per_detector: dict[str, int] = {}
     for matched_star in matching.matched:
@@ -441,6 +498,7 @@ def run_guide_first_frame_init(cfg: dict, *, include_debug_context: bool = False
         },
         "geometry_adapter": geometry_payload,
         "error_audit": error_audit,
+        "error_budget": error_budget.to_dict(),
         "meta": {
             "dataset_root": str(dataset_root),
             "frame_index": int(cfg["guide_init"].get("frame_index", 0)),

@@ -6,6 +6,7 @@ import fsglib.pipeline.evaluate as evaluate_module
 from fsglib.common.types import (
     AttitudeSolution,
     DatasetContext,
+    MatchedStar,
     MatchingResult,
     PreprocessedFrame,
     RawFrame,
@@ -240,3 +241,71 @@ def test_evaluate_frame_result_reports_xy_metrics_and_centroid_audit(monkeypatch
     assert np.isclose(evaluation.centroid_rms_dx_pix, 1.0)
     assert np.isclose(evaluation.centroid_rms_dy_pix, np.sqrt((2.0**2 + 1.0**2) / 2.0))
     assert evaluation.meta["centroid_step_audit"]["enabled"] is True
+
+
+def test_evaluate_frame_result_attaches_error_budget_summary_when_enabled():
+    ctx = _dataset_ctx()
+    raw_truth = [TruthStar(source_id=99, x_pix=10.0, y_pix=20.0, ra_deg=10.0, dec_deg=20.0)]
+    raw = _raw_frame_with_truth(raw_truth)
+    pre = PreprocessedFrame(
+        detector_id=0,
+        image=np.ones((8, 8), dtype=np.float64) * 100.0,
+        background=10.0,
+        noise_map=np.ones((8, 8), dtype=np.float64) * 2.0,
+        valid_mask=np.ones((8, 8), dtype=bool),
+        variance_map=np.ones((8, 8), dtype=np.float64) * 4.0,
+        preprocess_meta={
+            "variance_model_effective": "empirical_robust",
+            "variance_unit": "adu^2",
+            "background_rms": 2.0,
+        },
+    )
+    candidate = StarCandidate(
+        detector_id=0,
+        source_id=1,
+        x=10.0,
+        y=20.0,
+        flux=100.0,
+        peak=30.0,
+        area=3,
+        snr=12.0,
+        bbox=(9, 19, 11, 21),
+        centroid_cov_pix=np.eye(2, dtype=np.float64) * 0.25,
+    )
+    matching = MatchingResult(
+        matched=[
+            MatchedStar(
+                detector_id=0,
+                source_id=1,
+                catalog_id=99,
+                los_body=np.array([0.0, 0.0, 1.0], dtype=np.float64),
+                los_inertial=np.array([0.0, 0.0, 1.0], dtype=np.float64),
+                residual_arcsec=1.0,
+                flags={"sigma_angle_arcsec": 0.5},
+            )
+        ],
+        unmatched_observed_ids=[],
+        unmatched_catalog_ids=[],
+        mode="init",
+        success=True,
+        score=1.0,
+    )
+    solution = _solution_from_c_ib(_truth_attitude_from_radec(ctx.batch_center_ra_deg, ctx.batch_center_dec_deg))
+    solution.sigma_non_roll_arcsec = 0.4
+    solution.sigma_roll_arcsec = 0.8
+    cfg = {"evaluation": {"error_budget": {"enabled": True}}}
+
+    evaluation = evaluate_frame_result(
+        raw,
+        pre,
+        [candidate],
+        matching,
+        solution,
+        ctx,
+        cfg=cfg,
+    )
+
+    assert evaluation is not None
+    assert evaluation.error_budget is not None
+    assert evaluation.meta["error_budget"]["enabled"] is True
+    assert evaluation.meta["error_budget"]["summary"]["num_terms"] > 0

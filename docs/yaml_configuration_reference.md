@@ -41,7 +41,6 @@ They are documented here so configuration files do not hide silent no-ops.
 | `configs/guide_truth_noise_0065pix_exact_etcoord.yaml` | Truth-position synthetic centroid workflow with exact `et_focalplane` LOS geometry. |
 | `configs/main_sim_v2.yaml` | Generic single-frame simulated detector layout overlay. |
 | `configs/detector_layout.yaml` | Physical detector layout definition for the older generic optical model path. |
-| `configs/bias_correction.yaml` | Optional centroid-bias correction overlay. |
 
 ## Workflow Selection
 
@@ -127,10 +126,9 @@ This path depends on `models["projector"]` and `models["catalog"]`. The local
 | `dataset` | active | static truth coordinate interpretation |
 | `detector` | declared | detector metadata passed through context |
 | `layout` | active | generic optical projector and detector visibility |
-| `psf` | active | bias correction profile auto-resolution |
+| `psf` | partially active | PSF template-fit interface metadata |
 | `preprocess` | partially active | background subtraction and noise estimation |
-| `extract` | active | star detection, centroiding, optional bias correction |
-| `bias_profiles` | active when bias correction is enabled | centroid-bias table lookup |
+| `extract` | active | star detection, centroiding, covariance, and blend flags |
 | `guide_init` | active | real-centroid guide first-frame workflow |
 | `guide_truth_noise` | active | truth-noise guide workflow |
 | `et_coord` | active/external | `et_focalplane` registry, transformer, Gaia catalog |
@@ -224,7 +222,8 @@ Each `layout.detectors[]` entry supports:
 
 | Key | Type | Default | Status | Description |
 |-----|------|---------|--------|-------------|
-| `psf.active_model_key` | string or null | `null` | active | Used by `extract.bias_correction` when no explicit profile is provided. |
+| `psf.active_model_key` | string or null | `null` | declared | Names the active PSF model for audit and future template selection. It does not change the default `weighted_centroid` path. |
+| `psf.template_bundle_path` | path string or null | `null` | reserved | Required when `extract.centroid_method=psf_template_fit`; PR13 defines the interface, while actual Photsim7 PSF-template fitting is deferred to #89. |
 
 ## `preprocess`
 
@@ -249,7 +248,8 @@ Each `layout.detectors[]` entry supports:
 | `preprocess.sigma_clip_max_iters` | int | `3` | active | Maximum robust sigma-clipping iterations for background/noise estimation. |
 | `preprocess.background_mesh_size` | int | `64` | active with `mesh_median` | Mesh cell size in pixels for local median background and empirical local RMS estimates. |
 | `preprocess.variance_model` | string | `empirical_robust` | active | Supported values: `empirical_robust` and `poisson_read_noise`. `noise_map` is always `sqrt(variance_map)`. |
-| `preprocess.gain_e_per_dn` | float or null | `null` | active with `poisson_read_noise` | Electrons per DN/ADU for non-electron inputs. Required when `variance_model=poisson_read_noise` and the raw unit is not an electron unit. |
+| `preprocess.convert_to_electrons` | bool | `true` | active | If true, converts calibrated ADU/DN-like image units to electrons before dark subtraction, flat-fielding, background estimation, and noise estimation. |
+| `preprocess.gain_e_per_dn` | float or null | `1.0` | active with `convert_to_electrons` or `poisson_read_noise` | Electrons per DN/ADU for non-electron inputs. Customer YAML files may override this detector gain. Required when electron conversion is enabled, or when `variance_model=poisson_read_noise` and the raw/output unit is not an electron unit. |
 | `preprocess.read_noise_e` | float or null | `null` | active with `poisson_read_noise` | Read noise in electrons. Required, and may be zero for analytic/noiseless fixtures. |
 | `preprocess.quantization_noise_e` | float | `0.0` | active with `poisson_read_noise` | Optional quantization noise term in electrons. |
 | `preprocess.dark_current_e_per_s` | float or null | `null` | active with `poisson_read_noise` | Optional scalar dark-current shot-noise source in electrons per second, used only when the dark mean has been explicitly removed. Loaded dark-current calibration maps are preferred and use `raw.cadence_s`. |
@@ -259,13 +259,22 @@ The default `empirical_robust` variance model estimates RMS with a MAD-based
 robust sigma after the configured background subtraction; `mesh_median`
 produces spatially varying background and noise maps. `poisson_read_noise`
 computes variance from photon counts, loaded dark-current maps scaled by
-`raw.cadence_s` when present, read noise, and quantization noise. For DN/ADU
-inputs the calculation uses `preprocess.gain_e_per_dn` internally and converts
-`variance_map` back to the output image unit squared; `PreprocessedFrame.image`,
-`background`, and `noise_map` remain in the input image unit. Photon/read/dark
-variance is propagated through flat-response division when flat-field correction
-is enabled, but flat-field uncertainty itself is not included yet and is reported
-in metadata as disabled. Calibration asset paths are loaded by
+`raw.cadence_s` when present, read noise, and quantization noise. With
+`preprocess.convert_to_electrons=true`, missing raw units and legacy
+`electron_or_adu` units are treated as ADU; explicit `adu`/`dn` inputs are
+converted with `preprocess.gain_e_per_dn`; explicit electron units are treated as
+already converted. Unknown explicit units raise an error. Bias and FPN maps are
+subtracted in ADU before gain conversion; dark-current maps and read-noise
+configuration are interpreted in electrons after conversion. If electron
+conversion is explicitly disabled, loaded dark-current maps are still treated as
+electrons per second and converted back to the current output unit with
+`preprocess.gain_e_per_dn` before subtraction. Flat-field response is
+dimensionless and is applied after the unit conversion step, so the default path
+applies flat-fielding in electron space. `PreprocessedFrame.image`,
+`background`, `noise_map`, and `variance_map` are reported in electron units
+after conversion. Photon/read/dark variance is propagated through flat-response
+division when flat-field correction is enabled, but flat-field uncertainty itself
+is not included yet and is reported in metadata as disabled. Calibration asset paths are loaded by
 `build_models(cfg)` into
 `models["calib"]`; enabled products with missing paths, missing files, wrong
 rank, or shape mismatches raise explicit errors. `.npz` assets must either use
@@ -315,9 +324,14 @@ is a guide-detector derivative stored outside this source repository.
 | `extract.grow_threshold_sigma` | float | `3.0` | active | Low SNR threshold for 8-connected hysteresis growth. Must be less than or equal to `seed_threshold_sigma`. |
 | `extract.min_area` | int | `3` | active | Rejects grown connected components with fewer pixels. |
 | `extract.max_area` | int | `200` | active | Rejects grown connected components with more pixels. |
-| `extract.centroid_method` | string | `weighted_centroid` | active | Supported values: `weighted_centroid`, `fixed_window_first_moment`, `full_window_first_moment`. |
+| `extract.centroid_method` | string | `weighted_centroid` | active | Supported active values: `weighted_centroid`, `adaptive_moment_centroid`, `fixed_window_first_moment`, and `full_window_first_moment`. `psf_template_fit` is reserved and raises until #89. |
 | `extract.centroid_window.center` | string | `peak` | declared | Current fixed-window modes always center on the detected peak pixel. |
 | `extract.centroid_window.size` | odd int | `31` | active for fixed-window modes | Window size for `fixed_window_first_moment` and `full_window_first_moment`; must be positive and odd. |
+| `extract.centroid_covariance.min_sigma_pix` | float | `0.03` | active | Per-axis covariance floor added to extracted centroids so high-SNR stars do not receive unrealistically zero measurement uncertainty. |
+| `extract.centroid_covariance.jacobian_step_pix` | float | `0.01` | active | Pixel step used by `candidates_to_observed()` to finite-difference the projector and propagate pixel covariance to LOS/angular sigma. |
+| `extract.deblend.enabled` | bool | `true` | active | Enables image-only multi-peak blend detection inside a grown segment. |
+| `extract.deblend.policy` | string | `flag_only` | active | Supported values: `flag_only` and `reject`. `flag_only` records blend risk without dropping the candidate. |
+| `extract.deblend.peak_threshold_sigma` | float or null | `null` | active | SNR threshold for counting local peaks. Null reuses `extract.seed_threshold_sigma`. |
 | `extract.bbox_expand` | int | `2` | active | Expands the stored segmentation bounding box for weighted centroids. |
 | `extract.reject_edge_margin` | int | `3` | active | Rejects candidates whose centroid window touches an image edge within this margin. |
 | `extract.max_ellipticity` | float | `0.8` | active | Rejects candidates whose measured second-moment ellipticity exceeds this value. |
@@ -330,8 +344,10 @@ is a guide-detector derivative stored outside this source repository.
 Extraction uses the SNR image for segmentation. Seed and grow masks both use
 strict `>` threshold comparisons, and grow pixels must be connected to at least
 one seed pixel. Connectivity is 8-connected. If multiple seed pixels fall in the
-same grown connected component, PR12 intentionally returns one candidate; close
-source splitting is deferred to PR13 deblending. `weighted_centroid`, `flux`,
+same grown connected component, the default PR13 behavior still returns one
+candidate but records `blend_flag`, `num_local_peaks`, and `local_peaks`; setting
+`extract.deblend.policy=reject` drops multi-peak segments. `weighted_centroid`,
+`flux`,
 `area`, and candidate `snr` are based on the grown segment when
 `extract.centroid_method=weighted_centroid`; in fixed-window centroid modes,
 `area` and candidate `snr` remain grown-segment measurements, while `flux` and
@@ -339,6 +355,19 @@ source splitting is deferred to PR13 deblending. `weighted_centroid`, `flux`,
 always preserved separately as `StarCandidate.flags["segment_bbox"]`. Setting
 `grow_threshold_sigma` equal to `seed_threshold_sigma` reproduces seed-only
 segmentation.
+
+PR13 keeps `weighted_centroid` as the default because it is the flight-oriented
+low-latency estimator. It now also propagates pixel noise into
+`StarCandidate.centroid_cov_pix` and stores scalar summaries such as
+`centroid_sigma_x_pix`, `centroid_sigma_y_pix`, and
+`centroid_sigma_radial_pix` in flags. `adaptive_moment_centroid` is an explicit
+YAML-selected second-moment weighted centroid variant. It uses the grown segment
+to derive an adaptive elliptical kernel, then computes a weighted centroid and
+covariance. `psf_template_fit` is intentionally not implemented in PR13 because
+ET off-axis PSFs can be strongly non-Gaussian and require a configured external
+PSF bundle; selecting it currently requires `psf.template_bundle_path` and then
+raises a follow-up implementation error. The dedicated implementation is tracked
+in #89.
 
 Shape metrics are measured directly from the candidate pixels; PR12 does not use
 an external PSF model. `StarCandidate.shape` includes `sigma_major_pix`,
@@ -352,59 +381,6 @@ single-pixel sources, overly sharp candidates, and candidates overlapping
 preprocess artifact masks such as saturation guards. Accepted candidates also
 copy key shape values into `StarCandidate.flags` so they propagate through
 existing `ObservedStar.flags` paths.
-
-### `extract.bias_correction`
-
-| Key | Type | Default | Status | Description |
-|-----|------|---------|--------|-------------|
-| `extract.bias_correction.enabled` | bool | `false` | active | Enables local subpixel centroid-bias correction. |
-| `extract.bias_correction.profile` | string or null | `null` | active | Named profile under `bias_profiles.profiles`. If null, profile is resolved from PSF model key. |
-| `extract.bias_correction.psf_model_key` | string or null | `null` | active | Overrides `psf.active_model_key` for automatic profile lookup. |
-| `extract.bias_correction.calibration_key` | string | `fsg` | active | Selects table fields such as `<calibration_key>_x_pix` and `<calibration_key>_dx_err_pix`. |
-| `extract.bias_correction.auto_resolve_psf_model` | bool | `true` | reserved | Ignored by the current implementation; the resolver always falls back to `psf_model_key` or `psf.active_model_key` whenever `profile` is null. |
-| `extract.bias_correction.strict_centroid_check` | bool | `true` | active | Verifies configured centroid method/window against profile metadata when present. |
-| `extract.bias_correction.idw_k` | int | `12` | active | Number of nearest calibration samples used by inverse-distance interpolation. |
-| `extract.bias_correction.idw_power` | float | `2.0` | active | Power used by inverse-distance interpolation. |
-| `extract.bias_correction.store_debug_bias` | bool | `true` | declared | Bias debug fields are always stored when correction runs. |
-
-## `bias_profiles`
-
-`bias_profiles` is only required when `extract.bias_correction.enabled: true`.
-
-Named-profile form:
-
-```yaml
-bias_profiles:
-  profiles:
-    my_profile:
-      bias_table_path: configs/bias_profiles/table.json
-      centroid_method: weighted_centroid
-      calibration_key: fsg
-      window_size: 31
-```
-
-PSF-key form:
-
-```yaml
-bias_profiles:
-  by_psf_model:
-    photsim6ft_d280_focus_field12:
-      bias_table_path: configs/bias_profiles/photsim6ft_d280_focus_field12_purepsf_31pix.json
-      centroid_method: weighted_centroid
-      calibration_key: fsg
-```
-
-Supported profile fields:
-
-| Key | Type | Required | Status | Description |
-|-----|------|----------|--------|-------------|
-| `bias_table_path` | path string | yes | active | JSON table path. Relative paths are resolved against CWD first, then repository root. |
-| `centroid_method` | string | no | active when strict check is enabled | Expected extractor centroid method. |
-| `window_size` | int | no | active when strict check is enabled | Expected `extract.centroid_window.size`. |
-| `calibration_key` | string | no | active | Default table field prefix if runtime config does not override it. |
-| `description` | string | no | declared | Documentation only. |
-| `psf_bundle_name` | string | no | declared | Documentation only. |
-| `psf_field_angle_deg` | float | no | declared | Documentation only. |
 
 ## `guide_init`
 
@@ -620,11 +596,20 @@ magnitude when available, and the `weight_source`/`flux_weight` used for
 | `attitude.solver` | string | `quest` | declared | Only QUEST/SVD fallback is implemented. The key does not select another solver. |
 | `attitude.min_stars_mathematical` | int | `2` | active | Minimum matched stars required to attempt attitude solving. |
 | `attitude.min_stars_operational` | int | `4` | active | Minimum matched stars required for a `VALID` attitude solution. |
-| `attitude.weight_mode` | string | `variance_snr_hybrid` | declared | Current solver uses `MatchedStar.weight` directly. |
-| `attitude.outlier_reject_enable` | bool | `true` | active | Enables one-pass residual-gate outlier rejection. |
-| `attitude.outlier_max_residual_arcsec` | float | `30.0` | active | Residual gate for outlier rejection and final validity. |
-| `attitude.outlier_sigma_clip` | float | `3.0` | reserved | Sigma-clipping outlier rejection is not implemented. |
-| `attitude.max_iterations` | int | `2` | reserved | Iterative multi-pass outlier rejection is not implemented. |
+| `attitude.weight_mode` | string | `variance_snr_hybrid` | active | Controls how `ObservedStar.weight` is populated before matching: `snr`, `centroid_variance`, or `variance_snr_hybrid`. `sigma_angle_arcsec` is recorded regardless of mode when centroid covariance is available. |
+| `attitude.estimate_covariance` | bool | `true` | active | Enables PR19 small-angle attitude covariance estimation from matched-star `sigma_angle_arcsec`. If any used matched star lacks sigma, the attitude is still solved but covariance output is marked unavailable instead of fabricating uncertainty. |
+| `attitude.covariance_rank_tol` | float | `1e-12` | active | Relative eigenvalue tolerance for declaring the attitude covariance normal matrix singular or ill-conditioned. |
+| `attitude.outlier_reject_enable` | bool | `true` | active | Enables PR20 robust matched-star rejection before final attitude quality is accepted. |
+| `attitude.outlier_reject_mode` | string | `sigma_clip_iterative` | active | Robust rejection mode: `single_pass`, `hard_gate_iterative`, or `sigma_clip_iterative`. |
+| `attitude.outlier_max_residual_arcsec` | float | `30.0` | active | Absolute residual hard gate for outlier rejection and final validity. |
+| `attitude.outlier_sigma_clip` | float | `3.0` | active | Sigma-clipping threshold used by `sigma_clip_iterative`; measurement sigma is preferred when matched-star `sigma_angle_arcsec` exists. |
+| `attitude.outlier_use_measurement_sigma` | bool | `true` | active | Uses per-star `sigma_angle_arcsec` for normalized residual rejection when available. |
+| `attitude.outlier_sigma_floor_arcsec` | float | `2.0` | active | Minimum sigma used for normalized residual rejection, covering projection/model/catalog residuals not represented by centroid-only sigma. |
+| `attitude.outlier_mad_fallback_enable` | bool | `true` | active | Uses residual median/MAD sigma clipping for stars without measurement sigma. |
+| `attitude.outlier_mad_min_sigma_arcsec` | float | `1e-6` | active | Minimum robust residual sigma required before the MAD fallback can reject stars. |
+| `attitude.outlier_max_reject_per_iteration` | int | `1` | active | Maximum matched stars to reject per robust iteration; `<=0` allows all current outliers to be rejected together. |
+| `attitude.min_active_detectors_valid` | int/null | `null` | active | Optional minimum active detector count required for `VALID`; null records detector diversity without enforcing a hard detector-diversity gate. |
+| `attitude.max_iterations` | int | `5` | active | Maximum robust solve/rejection iterations for PR20 attitude validation. |
 | `attitude.quest_tol` | float | `1e-12` | active | Newton tolerance for QUEST characteristic-root solve. Not written in `base.yaml` yet. |
 | `attitude.quest_max_iter` | int | `50` | active | Maximum QUEST Newton iterations. Not written in `base.yaml` yet. |
 
@@ -644,6 +629,24 @@ magnitude when available, and the `weight_source`/`flux_weight` used for
 | `evaluation.batch_glob` | string | `batch*` | active | Batch directory glob for `evaluate_dataset`. |
 | `evaluation.frame_stride` | int | `1` | active | Frame stride for dataset evaluation. |
 | `evaluation.max_frames_per_batch` | int or null | `null` | active | Optional cap on evaluated frames per batch. |
+
+### `evaluation.error_budget`
+
+| Key | Type | Default | Status | Description |
+|-----|------|---------|--------|-------------|
+| `evaluation.error_budget.enabled` | bool | `true` | active | Enables the PR21 detector-to-attitude error-budget ledger. |
+| `evaluation.error_budget.output_json` | bool | `true` | active | Writes `validation/error_budget.json` in debug bundles when an error budget is present. |
+| `evaluation.error_budget.output_csv` | bool | `true` | active | Writes `validation/error_budget_terms.csv` with one row per ledger term. |
+| `evaluation.error_budget.max_per_star_records` | int or null | `null` | active | Optional cap for matched-star detail records in the ledger. Null keeps all matched stars. |
+| `evaluation.error_budget.catalog_uncertainty_arcsec` | float or null | `null` | active | Optional catalog/reference angular uncertainty prior. Null records the catalog term as unavailable instead of assuming zero. |
+| `evaluation.error_budget.optical_alignment_residual_arcsec` | float or null | `null` | active | Optional optical alignment/distortion residual prior. Null records the optics term as unavailable instead of assuming zero. |
+| `evaluation.error_budget.aggregate_percentiles` | list[int] | `[50, 95, 99]` | declared | Percentile intent for downstream aggregate reports; current code emits p50/p95/max summaries. |
+
+The ledger records each term with `name`, `stage`, `value`, `unit`, `source`,
+`assumption`, `available`, `reason`, and optional angular-equivalent value in
+arcsec. When the current configuration cannot support a physical decomposition
+for a term, the ledger marks that term unavailable with a reason. It does not
+fill missing physical noise terms with zero.
 
 ### `evaluation.centroid_step_audit`
 
@@ -743,7 +746,6 @@ behavior:
 - `io.*`
 - `preprocess.denoise_method`
 - `extract.detection_image`
-- `extract.bias_correction.auto_resolve_psf_model`
 - `match.init_bright_star_topk`
 - `match.pair_angle_tol_arcsec`
 - `match.hypothesis_topk`
@@ -755,9 +757,6 @@ behavior:
 - `ephemeris.enable_dva`
 - `ephemeris.enable_relativity`
 - `attitude.solver` beyond `quest`
-- `attitude.weight_mode`
-- `attitude.outlier_sigma_clip`
-- `attitude.max_iterations`
 - `metrics.*`
 - `logging.level`
 - `logging.save_source_catalog`

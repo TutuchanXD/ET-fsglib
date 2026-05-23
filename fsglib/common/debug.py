@@ -1,4 +1,5 @@
 import json
+import csv
 import re
 from pathlib import Path
 from typing import Any
@@ -7,6 +8,7 @@ import numpy as np
 
 from fsglib.common.coords import radec_to_unit_vector
 from fsglib.common.io import load_dataset_batch
+from fsglib.pipeline.error_budget import error_budget_csv_rows
 
 
 def _get_field(obj: Any, name: str, default: Any = None) -> Any:
@@ -26,6 +28,8 @@ def _safe_artifact_mask_filename(name: object) -> str:
 
 
 def _to_builtin(value: Any) -> Any:
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        return _to_builtin(value.to_dict())
     if isinstance(value, dict):
         return {str(key): _to_builtin(val) for key, val in value.items()}
     if isinstance(value, (list, tuple)):
@@ -135,6 +139,9 @@ def _serialize_candidates(candidates: list[Any]) -> list[dict[str, Any]]:
                 "area_pix": int(candidate.area),
                 "snr": float(candidate.snr),
                 "bbox": list(candidate.bbox),
+                "centroid_cov_pix": _to_builtin(
+                    getattr(candidate, "centroid_cov_pix", None)
+                ),
                 "shape": _to_builtin(candidate.shape),
                 "flags": _to_builtin(candidate.flags),
             }
@@ -295,6 +302,10 @@ def _build_analysis_payload(result: Any, dataset_ctx: Any | None) -> dict[str, A
             "active_detector_ids": list(solution.active_detector_ids),
             "solver_iterations": int(solution.solver_iterations),
             "q_ib": _to_builtin(solution.q_ib),
+            "covariance_rad2": _to_builtin(solution.covariance_rad2),
+            "sigma_non_roll_arcsec": _safe_float(solution.sigma_non_roll_arcsec),
+            "sigma_roll_arcsec": _safe_float(solution.sigma_roll_arcsec),
+            "attitude_condition_number": _safe_float(solution.attitude_condition_number),
             "quality": _to_builtin(solution.quality),
         }
 
@@ -654,6 +665,10 @@ def _build_solution_payload(result: Any) -> dict[str, Any]:
         "degraded_level": solution.degraded_level,
         "active_detector_ids": solution.active_detector_ids,
         "solver_iterations": solution.solver_iterations,
+        "covariance_rad2": _to_builtin(solution.covariance_rad2),
+        "sigma_non_roll_arcsec": _safe_float(solution.sigma_non_roll_arcsec),
+        "sigma_roll_arcsec": _safe_float(solution.sigma_roll_arcsec),
+        "attitude_condition_number": _safe_float(solution.attitude_condition_number),
         "quality": solution.quality,
         "timings_s": meta.get("timings_s"),
     }
@@ -677,6 +692,8 @@ def _build_solution_payload(result: Any) -> dict[str, Any]:
         evaluation_meta = dict(evaluation.meta) if isinstance(evaluation.meta, dict) else {}
         if "centroid_step_audit" in evaluation_meta:
             evaluation_meta["centroid_step_audit"] = centroid_step_audit_summary
+        error_budget = getattr(evaluation, "error_budget", None)
+        error_budget_payload = None if error_budget is None else error_budget.to_dict()
         payload["evaluation"] = {
             "num_truth_stars": evaluation.num_truth_stars,
             "num_candidate_truth_matches": evaluation.num_candidate_truth_matches,
@@ -697,7 +714,84 @@ def _build_solution_payload(result: Any) -> dict[str, Any]:
             "meta": evaluation_meta,
             "centroid_step_audit_summary": centroid_step_audit_summary,
         }
+        if error_budget_payload is not None:
+            payload["error_budget"] = error_budget_payload
     return payload
+
+
+def _write_attitude_debug_artifacts(bundle_dir: Path, solution_payload: dict[str, Any]) -> None:
+    attitude_dir = bundle_dir / "attitude"
+    attitude_dir.mkdir(parents=True, exist_ok=True)
+
+    quality = solution_payload.get("quality") or {}
+    meta = quality.get("meta") if isinstance(quality, dict) else {}
+    meta = meta if isinstance(meta, dict) else {}
+    robust_rejection = meta.get(
+        "robust_rejection",
+        {
+            "enabled": False,
+            "reason": "not_recorded",
+            "rejected_stars": [],
+            "iterations": [],
+        },
+    )
+    covariance_meta = meta.get(
+        "attitude_covariance",
+        {
+            "available": False,
+            "reason": "not_recorded",
+        },
+    )
+
+    _write_json(
+        attitude_dir / "solution_summary.json",
+        {
+            "valid": solution_payload.get("valid"),
+            "quality_flag": solution_payload.get("quality_flag"),
+            "degraded_level": solution_payload.get("degraded_level"),
+            "num_matched": solution_payload.get("num_matched"),
+            "num_rejected": solution_payload.get("num_rejected"),
+            "active_detector_ids": solution_payload.get("active_detector_ids"),
+            "solver_iterations": solution_payload.get("solver_iterations"),
+            "q_ib": solution_payload.get("q_ib"),
+            "residual_rms_arcsec": solution_payload.get("residual_rms_arcsec"),
+            "residual_max_arcsec": solution_payload.get("residual_max_arcsec"),
+        },
+    )
+    _write_json(
+        attitude_dir / "covariance.json",
+        {
+            "covariance_rad2": solution_payload.get("covariance_rad2"),
+            "sigma_non_roll_arcsec": solution_payload.get("sigma_non_roll_arcsec"),
+            "sigma_roll_arcsec": solution_payload.get("sigma_roll_arcsec"),
+            "attitude_condition_number": solution_payload.get("attitude_condition_number"),
+            "meta": covariance_meta,
+        },
+    )
+    _write_json(attitude_dir / "robust_rejection.json", robust_rejection)
+
+
+def _write_validation_debug_artifacts(
+    bundle_dir: Path,
+    error_budget_payload: dict[str, Any] | None,
+    cfg: dict | None = None,
+) -> None:
+    if not error_budget_payload:
+        return
+    budget_cfg = {} if cfg is None else dict(cfg.get("evaluation", {}).get("error_budget", {}))
+    validation_dir = bundle_dir / "validation"
+    validation_dir.mkdir(parents=True, exist_ok=True)
+    if budget_cfg.get("output_json", True):
+        _write_json(validation_dir / "error_budget.json", error_budget_payload)
+
+    rows = error_budget_csv_rows(error_budget_payload)
+    if not rows or not budget_cfg.get("output_csv", True):
+        return
+    csv_path = validation_dir / "error_budget_terms.csv"
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def _write_bundle_readme(bundle_dir: Path, result: Any, analysis: dict[str, Any]) -> None:
@@ -718,6 +812,11 @@ def _write_bundle_readme(bundle_dir: Path, result: Any, analysis: dict[str, Any]
         "- `matches.json`: 最终参与姿态解算的匹配对，以及 truth/预测/观测三者之间的关系。",
         "- `solution.json`: 主结果文件。",
         "- `analysis.json`: 误差分解文件，用于区分静态 truth 偏差、公共平移项、局部质心散布、匹配残差和姿态误差。",
+        "- `attitude/solution_summary.json`: 姿态解算摘要。",
+        "- `attitude/covariance.json`: 姿态 covariance 与控制质量指标。",
+        "- `attitude/robust_rejection.json`: PR20 姿态鲁棒剔除逐轮审计。",
+        "- `validation/error_budget.json`: PR21 探测器到姿态误差预算 ledger。",
+        "- `validation/error_budget_terms.csv`: PR21 ledger 的逐项表格版本，便于粘贴和排序。",
         "- `centroid_step_audit.json`: 单星 vs 多星质心提取分步骤审计结果，重点看每一步的 `x / y / 总误差` 如何变化。",
         "- `overlay_truth_candidates.png`: 当前 truth 与提取质心叠加图。",
         "- `matched_truth_bias.png`: matched 星从当前 truth 到观测质心的偏差箭头图。",
@@ -734,6 +833,10 @@ def _write_bundle_readme(bundle_dir: Path, result: Any, analysis: dict[str, Any]
         "- `degraded_level`: 当前解算是否处于降级模式。",
         "- `active_detector_ids`: 参与当前解算的探测器编号列表。",
         "- `solver_iterations`: 当前求解器迭代次数。",
+        "- `covariance_rad2`: 小角姿态 covariance，单位 rad^2；不可用时为 null。",
+        "- `sigma_non_roll_arcsec`: 光轴指向二维 1-sigma 不确定度。",
+        "- `sigma_roll_arcsec`: 绕光轴滚转 1-sigma 不确定度。",
+        "- `attitude_condition_number`: 姿态 covariance normal matrix 条件数。",
         "- `quality`: 姿态解算质量摘要，例如输入星数、使用星数、残差门限。",
         "- `timings_s`: 各阶段耗时统计，单位秒。",
         "- `matching.debug.mean_residual_pix`: 匹配阶段中，参考预测像点到观测质心的平均像面残差。",
@@ -823,6 +926,8 @@ def save_debug_bundle(result: Any, cfg: dict) -> Path | None:
     _write_json(bundle_dir / "matches.json", matches_payload)
     _write_json(bundle_dir / "solution.json", solution_payload)
     _write_json(bundle_dir / "analysis.json", analysis_payload)
+    _write_attitude_debug_artifacts(bundle_dir, solution_payload)
+    _write_validation_debug_artifacts(bundle_dir, solution_payload.get("error_budget"), cfg)
     evaluation = _get_field(result, "evaluation")
     if evaluation is not None and isinstance(evaluation.meta, dict):
         centroid_step_audit = evaluation.meta.get("centroid_step_audit")

@@ -11,6 +11,8 @@ from fsglib.common.io import load_npz_frame
 from fsglib.common.types import AttitudeSolveInput, MatchingContext, ObservedStar, StarCandidate
 from fsglib.ephemeris.guide_geometry import build_exact_focalplane_geometry_adapter
 from fsglib.match.pipeline import match_stars
+from fsglib.pipeline.convert import observed_weight_from_sigma, propagate_centroid_covariance
+from fsglib.pipeline.error_budget import build_error_budget_ledger
 from fsglib.pipeline.guide_error_audit import compute_guide_error_audit
 from fsglib.pipeline.run_guide_init import (
     _build_reference_stars,
@@ -156,6 +158,7 @@ def _build_truth_noise_observed(
                 area=1,
                 snr=float(snr_proxy),
                 bbox=(peak_x, peak_y, peak_x, peak_y),
+                centroid_cov_pix=np.eye(2, dtype=np.float64) * noise_sigma**2,
                 shape={},
                 flags={
                     "synthetic_from_truth": True,
@@ -220,6 +223,19 @@ def _build_truth_noise_observed(
                 candidate.flags["injected_dy_pix"]
             )
             transformed = geometry_adapter.pixel_to_focal(detector_id, observed_x, observed_y)
+            los_cov_body, sigma_angle_arcsec = propagate_centroid_covariance(
+                geometry_adapter,
+                detector_id,
+                observed_x,
+                observed_y,
+                candidate.centroid_cov_pix,
+                cfg,
+            )
+            weight, weight_flags = observed_weight_from_sigma(
+                candidate.snr,
+                sigma_angle_arcsec,
+                cfg,
+            )
             observed.append(
                 ObservedStar(
                     detector_id=detector_id,
@@ -229,9 +245,14 @@ def _build_truth_noise_observed(
                     los_body=geometry_adapter.pixel_to_body_los(detector_id, observed_x, observed_y),
                     flux=float(candidate.flux),
                     snr=float(candidate.snr),
-                    weight=max(float(candidate.snr), 1.0),
+                    weight=weight,
+                    centroid_cov_pix=candidate.centroid_cov_pix,
+                    los_cov_body=los_cov_body,
+                    sigma_angle_arcsec=sigma_angle_arcsec,
                     flags={
                         **candidate.flags,
+                        **weight_flags,
+                        "sigma_angle_arcsec": sigma_angle_arcsec,
                         "sim_x_pix": float(candidate.x),
                         "sim_y_pix": float(candidate.y),
                         "et_x_pix": observed_x,
@@ -299,6 +320,18 @@ def run_guide_first_frame_truth_noise(cfg: dict) -> dict:
         matching,
         solution,
     )
+    error_budget = build_error_budget_ledger(
+        raw=None,
+        preprocessed=None,
+        candidates=[],
+        observed=observed,
+        matching=matching,
+        solution=solution,
+        evaluation=None,
+        dataset_ctx=None,
+        cfg=helper_cfg,
+        detector_contexts=detector_contexts,
+    )
 
     matched_per_detector: dict[str, int] = {}
     for matched_star in matching.matched:
@@ -363,6 +396,7 @@ def run_guide_first_frame_truth_noise(cfg: dict) -> dict:
             "los_geometry_mode": str(guide_cfg.get("los_geometry_mode", "exact_et_focalplane")),
         },
         "error_audit": error_audit,
+        "error_budget": error_budget.to_dict(),
         "meta": {
             "dataset_root": str(dataset_root),
             "frame_index": int(guide_cfg.get("frame_index", 0)),

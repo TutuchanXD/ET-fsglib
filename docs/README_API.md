@@ -198,7 +198,7 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 
 - 星点提取的直接输出；
 - `shape` 里写入由候选像素直接测得的二阶矩形态指标；
-- `flags` 里写入 hysteresis 阈值、质心窗口、peak 像素、shape summary、bias correction；
+- `flags` 里写入 hysteresis 阈值、质心窗口、peak 像素、shape summary、blend flag 和 centroid covariance summary；
 
 ### 5.2 观测星与匹配星
 
@@ -304,8 +304,10 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 质心方法：
 
 - `weighted_centroid`
+- `adaptive_moment_centroid`
 - `fixed_window_first_moment`
 - `full_window_first_moment`
+- `psf_template_fit`（接口已声明，真实模板拟合留给 #89）
 
 配置入口：
 
@@ -319,24 +321,25 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 - `extract.centroid_method`
 - `extract.centroid_window.size`
 - `extract.reject_edge_margin`
-- `extract.bias_correction.*`
+- `extract.centroid_covariance.*`
+- `extract.deblend.*`
 
 行为：
 
 - segmentation 在 SNR 图上使用 seed/grow hysteresis，两个阈值都使用严格 `>` 比较；
 - grow region 使用 8-connected 连通性，且必须连接到至少一个 seed pixel；
-- 多个 seed 落入同一个 grown component 时返回一个 candidate，近邻拆分留给 PR13；
+- 多个 seed 落入同一个 grown component 时返回一个 candidate，并通过 PR13 的 blend flag 标记多峰风险；
 - `weighted_centroid` 模式下的 `flux`、`area`、candidate `snr` 和 `StarCandidate.bbox` 基于 grown segment；
 - fixed-window centroid 模式下 `area` 和 candidate `snr` 仍基于 grown segment，但 `flux` 和 `StarCandidate.bbox` 来自 centroid window；grown segment bbox 保存在 `flags["segment_bbox"]`；
 - `grow_threshold_sigma = seed_threshold_sigma` 可复现 seed-only segmentation；
-- shape 由算法从 candidate pixels 自行计算，不依赖外部 PSF；外部 PSF/ML centroid 留给 PR13；
+- shape 由算法从 candidate pixels 自行计算，不依赖外部 PSF；真实 PSF-template centroid 留给 #89；
 - `ellipticity = 1 - sqrt(lambda_min / lambda_max)`，超过 `extract.max_ellipticity` 的候选会被拒绝；
 - `fwhm_pix` 是 major-axis 二阶矩代理量，`sharpness` 是 peak / grown-segment 平均面亮度；
-- 默认 `base.yaml` 会拒绝单像素/退化二阶矩候选、过尖锐候选，以及与 saturation/artifact mask 相交的候选；关闭 `extract.reject_degenerate_sources` 后仍可保留退化候选并标记 `shape_degenerate=true`。
-
-其他：
-
-- ~~bias correction 的入口在 [fsglib/extract/bias.py](/home/cxgao/ET/FSG/fsglib/fsglib/extract/bias.py:69)~~（已经弃用——chenxu）。
+- 默认 `base.yaml` 会拒绝单像素/退化二阶矩候选、过尖锐候选，以及与 saturation/artifact mask 相交的候选；关闭 `extract.reject_degenerate_sources` 后仍可保留退化候选并标记 `shape_degenerate=true`；
+- PR13 保持 `weighted_centroid` 作为默认星上友好的低时延质心算法，同时为每个候选记录 `centroid_cov_pix` 和 `centroid_sigma_*`；
+- `adaptive_moment_centroid` 是显式启用的二阶矩加权质心变体；
+- `psf_template_fit` 需要 `psf.template_bundle_path`，但 PR13 只保留接口和文档，真正基于 Photsim7 PSF bundle 的模板拟合留给 #89；
+- grown segment 内的多个局部峰会记录 `blend_flag` / `num_local_peaks`；`extract.deblend.policy=reject` 可保守丢弃混叠候选。
 
 ### 6.4 候选星转观测向量
 
@@ -347,6 +350,12 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 接口用于通用投影链路，要求 `projector` ：
 
 - `pixel_to_los_body(detector_id, x, y)`
+
+PR13 会通过有限差分 projector Jacobian 将 `StarCandidate.centroid_cov_pix`
+传播到 `ObservedStar.los_cov_body` 和 `ObservedStar.sigma_angle_arcsec`。
+`attitude.weight_mode` 可以选择 `snr`、`centroid_variance` 或
+`variance_snr_hybrid`，但只要存在 covariance，结果中都会记录
+`sigma_angle_arcsec`。
 
 **当前导星直接调用 `et_focalplane` 做像点到 LOS 的转换。**
 
@@ -402,8 +411,10 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 流程：
 
 - `solve_quest`
-- `reject_outliers`
-- 重新求解
+- PR20 iterative robust rejection：按 hard gate、带
+  `outlier_sigma_floor_arcsec` 的 `sigma_angle_arcsec` 归一化残差和 MAD
+  fallback 逐轮剔除坏匹配，并重新求解
+- 基于 matched-star `sigma_angle_arcsec` 估计小角姿态 covariance
 - 质量标记与降级等级判定
 
 约定：
@@ -412,6 +423,14 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 - `q_ib` / `c_ib` 表示惯性系到本体系；
 - `quality_flag` 当前主要取 `VALID`、`DEGRADED`、`LOST`、`INVALID`；
 - `degraded_level` 由有效 detector 数量给出。
+- PR19 输出 `covariance_rad2`、`sigma_non_roll_arcsec`、
+  `sigma_roll_arcsec` 和 `attitude_condition_number`。若 used matched stars
+  中缺少 `sigma_angle_arcsec`，姿态仍会正常解算，但 covariance 字段保持
+  `None`，原因写入 `quality["meta"]["attitude_covariance"]`。
+- PR20 输出 `quality["meta"]["robust_rejection"]`，记录每轮参与解算的
+  matched stars、每个 rejection 的 `detector_id/source_id/catalog_id`、
+  residual、阈值和原因。若配置了 `min_active_detectors_valid`，探测器数量不足
+  会令结果降级为 `valid=False`。
 
 ### 6.8 评估调试
 
@@ -423,7 +442,15 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 `summarize_sequence_result(sequence_result) -> dict`
 
 - [fsglib/pipeline/evaluate.py](/home/cxgao/ET/FSG/fsglib/fsglib/pipeline/evaluate.py:242)
-- 汇总序列指标。
+- 汇总序列指标，并在帧级 ledger 存在时输出 `error_budget` 聚合百分位。
+
+`build_error_budget_ledger(...) -> ErrorBudgetLedger`
+
+- [fsglib/pipeline/error_budget.py](/home/cxgao/ET/FSG/fsglib/fsglib/pipeline/error_budget.py:1)
+- 生成 PR21 detector-to-attitude error-budget ledger；
+- 每个 term 包含 `name/stage/value/unit/source/assumption/available/reason`；
+- 缺少物理输入时记录 unavailable term，不用 0 伪装未知误差；
+- fake PR9 calibration assets 会在 assumption/provenance 中显式标记。
 
 `save_debug_bundle(result, cfg) -> Path | None`
 
@@ -442,6 +469,7 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 5. 用 `query_detector_sources()` 为每个 detector 构造参考星。
 6. 统一做匹配和 QUEST 解算。
 7. 生成 `guide_error_audit`。
+8. 生成 `error_budget`，用于把 detector/preprocess/centroid/matching/attitude 项串成可追溯预算。
 
 依赖 `et_focalplane` 接口包括：
 
@@ -486,6 +514,23 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 - [configs/guide_truth_noise_0065pix_exact_etcoord.yaml](/home/cxgao/ET/FSG/fsglib/configs/guide_truth_noise_0065pix_exact_etcoord.yaml:1)
 - 当前主链路
 
+PR21 的本地烟测入口：
+
+```bash
+python examples/run_pr21_error_budget_smoke.py
+```
+
+该脚本默认使用 `truth_noise_exact` 小规模 smoke，并在进程内限制内存、
+CPU 时间和 BLAS 线程，防止本地 Gaia/et_focalplane 查询异常扩大导致工作站
+卡死。可通过 `FSGLIB_SMOKE_MAX_MEMORY_GB`、
+`FSGLIB_SMOKE_MEMORY_FRACTION`、`FSGLIB_SMOKE_RESERVE_MEMORY_GB`、
+`FSGLIB_SMOKE_MAX_CPU_SECONDS`、`FSGLIB_SMOKE_MAX_OBS_PER_DETECTOR`、
+`FSGLIB_SMOKE_REFERENCE_TOPK_PER_DETECTOR`、`FSGLIB_SMOKE_CATALOG_G_MAG_MAX`
+调整上限。未显式设置 `FSGLIB_SMOKE_MAX_MEMORY_GB` 时，脚本会按当前
+`MemAvailable` 扣除保留内存后取一个比例作为上限，避免无上限增持。若需要真实图像烟测，可显式设置
+`FSGLIB_PR21_SMOKE_MODE=real_image_no_calib`；该模式会关闭默认 2049 假校准资产，
+因为 legacy 仿真图是 1947 像素。
+
 ## 9. 结果调试
 
 ### 9.1 `FrameResult`
@@ -519,3 +564,5 @@ PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
 - `solution.json`
 - `analysis.json`
 - `centroid_step_audit.json`
+- `validation/error_budget.json`
+- `validation/error_budget_terms.csv`

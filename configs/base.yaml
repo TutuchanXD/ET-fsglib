@@ -27,6 +27,7 @@ detector:
 
 psf:
   active_model_key: null
+  template_bundle_path: null
 
 preprocess:
   enable_bias_subtraction: true
@@ -48,7 +49,8 @@ preprocess:
   sigma_clip_max_iters: 3
   background_mesh_size: 64
   variance_model: empirical_robust
-  gain_e_per_dn: null
+  convert_to_electrons: true
+  gain_e_per_dn: 1.0
   read_noise_e: null
   quantization_noise_e: 0.0
   dark_current_e_per_s: null
@@ -72,20 +74,13 @@ extract:
   max_sharpness: 10.0
   reject_artifact_mask_overlap: true
   artifact_mask_margin_pix: 2
-  bias_correction:
-    enabled: false
-    profile: null
-    psf_model_key: null
-    calibration_key: fsg
-    auto_resolve_psf_model: true
-    strict_centroid_check: true
-    idw_k: 12
-    idw_power: 2.0
-    store_debug_bias: true
-
-bias_profiles:
-  profiles: {}
-  by_psf_model: {}
+  centroid_covariance:
+    min_sigma_pix: 0.03
+    jacobian_step_pix: 0.01
+  deblend:
+    enabled: true
+    policy: flag_only
+    peak_threshold_sigma: null
 
 match:
   algorithm: "predicted_position"
@@ -159,10 +154,19 @@ attitude:
   min_stars_mathematical: 2
   min_stars_operational: 4
   weight_mode: variance_snr_hybrid
+  estimate_covariance: true
+  covariance_rank_tol: 1.0e-12
   outlier_reject_enable: true
+  outlier_reject_mode: sigma_clip_iterative
   outlier_max_residual_arcsec: 30.0
   outlier_sigma_clip: 3.0
-  max_iterations: 2
+  outlier_use_measurement_sigma: true
+  outlier_sigma_floor_arcsec: 2.0
+  outlier_mad_fallback_enable: true
+  outlier_mad_min_sigma_arcsec: 1.0e-6
+  outlier_max_reject_per_iteration: 1
+  min_active_detectors_valid: null
+  max_iterations: 5
 
 metrics:
   enable_truth_compare: true
@@ -174,6 +178,14 @@ evaluation:
   batch_glob: "batch*"
   frame_stride: 1
   max_frames_per_batch: null
+  error_budget:
+    enabled: true
+    output_json: true
+    output_csv: true
+    max_per_star_records: null
+    catalog_uncertainty_arcsec: null
+    optical_alignment_residual_arcsec: null
+    aggregate_percentiles: [50, 95, 99]
   centroid_step_audit:
     enabled: false
     stamp_size: 31

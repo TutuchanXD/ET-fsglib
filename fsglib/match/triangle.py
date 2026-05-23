@@ -173,9 +173,14 @@ class TriangleMatcher:
                     los_body=obs.los_body,
                     los_inertial=self.cat_vecs[cat_idx],
                     residual_arcsec=None,
-                    weight=1.0,
+                    weight=max(float(obs.weight), 1e-6),
                     match_score=float(votes),
-                    flags={"triangle_votes": votes}
+                    flags={
+                        "triangle_votes": votes,
+                        "sigma_angle_arcsec": obs.sigma_angle_arcsec,
+                        "weight_source": obs.flags.get("weight_source"),
+                        "weight_mode": obs.flags.get("weight_mode"),
+                    }
                 ))
                 
         return matched

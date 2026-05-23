@@ -1,4 +1,4 @@
-# 调试输出
+# fsglib 调试输出说明
 
 ## 1. 输出目录
 
@@ -30,6 +30,16 @@
   - 本帧主结果。
 - `analysis.json`
   - 对误差来源做进一步分解后的结果。
+- `attitude/solution_summary.json`
+  - 姿态解算摘要，包含质量标记、支持星数、残差和四元数。
+- `attitude/covariance.json`
+  - PR19 姿态 covariance 与控制质量指标。
+- `attitude/robust_rejection.json`
+  - PR20 姿态鲁棒剔除逐轮审计，包含 rejected IDs、残差、阈值和原因。
+- `validation/error_budget.json`
+  - PR21 探测器噪声到姿态误差的结构化 ledger；每个 term 都带单位、来源、假设和缺失原因。
+- `validation/error_budget_terms.csv`
+  - 同一 ledger 的表格版本，便于排序、筛选和复制到分析表。
 - `overlay_truth_candidates.png`
   - 静态 truth 与提取质心叠加图。
 - `matched_truth_bias.png`
@@ -49,6 +59,14 @@
   - 姿态求解阶段剔除的星数。
 - `q_ib`
   - 四元数 `[w, x, y, z]`，表示惯性系到本体系的旋转。
+- `covariance_rad2`
+  - PR19 小角姿态 covariance，单位 rad²；缺少 matched-star sigma 时为 null。
+- `sigma_non_roll_arcsec`
+  - 光轴指向二维 1-sigma 不确定度，单位角秒。
+- `sigma_roll_arcsec`
+  - 绕 body `+Z` 光轴滚转 1-sigma 不确定度，单位角秒。
+- `attitude_condition_number`
+  - 姿态 covariance normal matrix 的条件数。
 - `residual_rms_arcsec`
   - 姿态解算后，matched 星方向矢量残差的 RMS，单位角秒。
 - `residual_max_arcsec`
@@ -62,7 +80,11 @@
 - `solver_iterations`
   - 求解器迭代次数。
 - `quality`
-  - 姿态解算的质量摘要，如输入星数、使用星数、残差门限。
+  - 姿态解算的质量摘要，如输入星数、使用星数、残差门限和
+    `quality.meta.attitude_covariance` / `quality.meta.robust_rejection`。
+- `error_budget`
+  - PR21 error-budget ledger 的完整 JSON 副本；debug bundle 同时在
+    `validation/error_budget.json` 保存独立文件。
 - `timings_s`
   - 各阶段耗时。
 - `matching.debug.mean_residual_pix`

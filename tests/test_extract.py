@@ -1,5 +1,3 @@
-import json
-
 import numpy as np
 import pytest
 
@@ -46,9 +44,9 @@ def _extract_cfg(method: str, window_size: int = 5) -> dict:
             "bbox_expand": 0,
             "reject_edge_margin": 0,
             "max_ellipticity": 1.0,
-            "bias_correction": {"enabled": False},
+            "centroid_covariance": {"min_sigma_pix": 0.0},
+            "deblend": {"enabled": True, "policy": "flag_only"},
         },
-        "bias_profiles": {"profiles": {}},
     }
 
 
@@ -66,7 +64,9 @@ def test_extract_stars_weighted_centroid_uses_segment_pixels_only():
     assert np.isclose(candidate.x, (1.0 * 6.0 + 2.0 * 10.0) / 16.0)
     assert np.isclose(candidate.y, 2.0)
     assert candidate.flags["centroid_method"] == "weighted_centroid"
-    assert candidate.flags["centroid_bias_corrected"] is False
+    assert candidate.centroid_cov_pix.shape == (2, 2)
+    assert candidate.flags["centroid_covariance_source"] == "noise_propagation"
+    assert candidate.flags["centroid_sigma_x_pix"] > 0.0
 
 
 def test_extract_stars_grows_connected_pixels_above_grow_threshold():
@@ -139,6 +139,33 @@ def test_extract_stars_fixed_window_first_moment_matches_full_window_definition(
     assert np.isclose(candidate.y, 2.0)
     assert candidate.bbox == (0, 0, 4, 4)
     assert candidate.flags["centroid_method"] == "fixed_window_first_moment"
+    assert candidate.centroid_cov_pix.shape == (2, 2)
+
+
+def test_extract_stars_adaptive_moment_centroid_is_explicitly_selectable():
+    image = np.zeros((7, 7), dtype=np.float64)
+    image[3, 2] = 4.0
+    image[3, 3] = 10.0
+    image[3, 4] = 5.0
+    cfg = _extract_cfg("adaptive_moment_centroid")
+
+    candidates = extract_stars(_frame_from_image(image), cfg=cfg)
+
+    assert len(candidates) == 1
+    assert candidates[0].flags["centroid_method"] == "adaptive_moment_centroid"
+    assert candidates[0].centroid_cov_pix.shape == (2, 2)
+    assert np.all(np.linalg.eigvalsh(candidates[0].centroid_cov_pix) >= 0.0)
+
+
+def test_extract_stars_rejects_psf_template_fit_until_followup_implementation():
+    cfg = _extract_cfg("psf_template_fit")
+
+    with pytest.raises(ValueError, match="psf.template_bundle_path"):
+        extract_stars(_frame_from_image(np.eye(5, dtype=np.float64) * 10.0), cfg=cfg)
+
+    cfg["psf"] = {"template_bundle_path": "/tmp/psf.pkl"}
+    with pytest.raises(NotImplementedError, match="#89"):
+        extract_stars(_frame_from_image(np.eye(5, dtype=np.float64) * 10.0), cfg=cfg)
 
 
 def test_extract_stars_populates_shape_metrics_for_round_source():
@@ -247,113 +274,54 @@ def test_extract_stars_rejects_invalid_artifact_mask_margin(margin):
         )
 
 
-def test_extract_stars_applies_bias_correction_from_profile(tmp_path):
+def test_extract_stars_flags_multi_peak_blends_by_default():
+    image = np.zeros((7, 7), dtype=np.float64)
+    image[3, 2] = 10.0
+    image[3, 3] = 4.0
+    image[3, 4] = 9.0
+
+    candidates = extract_stars(_frame_from_image(image), cfg=_extract_cfg("weighted_centroid"))
+
+    assert len(candidates) == 1
+    assert candidates[0].flags["blend_flag"] is True
+    assert candidates[0].flags["num_local_peaks"] == 2
+
+
+def test_extract_stars_can_reject_multi_peak_blends():
     image = np.zeros((5, 5), dtype=np.float64)
-    image[2, 1] = 6.0
     image[2, 2] = 10.0
-    image[2, 3] = 3.0
-    raw_x = (1.0 * 6.0 + 2.0 * 10.0) / 16.0
-    raw_y = 2.0
-
-    profile_path = tmp_path / "bias_profile.json"
-    profile_path.write_text(
-        json.dumps(
-            {
-                "profile_rows": [
-                    {
-                        "fsg_x_pix": raw_x,
-                        "fsg_y_pix": raw_y,
-                        "fsg_dx_err_pix": 0.25,
-                        "fsg_dy_err_pix": -0.10,
-                    }
-                ]
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-
+    image[2, 3] = 4.0
+    image[2, 4] = 9.0
     cfg = _deep_update(
-        _extract_cfg("weighted_centroid", window_size=5),
-        {
-            "psf": {"active_model_key": "unit_test_psf"},
-            "extract": {
-                "bias_correction": {
-                    "enabled": True,
-                    "profile": None,
-                    "strict_centroid_check": True,
-                    "idw_k": 1,
-                    "idw_power": 2.0,
-                }
-            },
-            "bias_profiles": {
-                "by_psf_model": {
-                    "unit_test_psf": {
-                        "bias_table_path": str(profile_path),
-                        "calibration_key": "fsg",
-                        "centroid_method": "weighted_centroid",
-                    }
-                }
-            },
-        },
+        _extract_cfg("weighted_centroid"),
+        {"extract": {"deblend": {"enabled": True, "policy": "reject"}}},
     )
 
     candidates = extract_stars(_frame_from_image(image), cfg=cfg)
 
-    assert len(candidates) == 1
-    candidate = candidates[0]
-    assert np.isclose(candidate.flags["raw_centroid_x_pix"], raw_x)
-    assert np.isclose(candidate.flags["raw_centroid_y_pix"], raw_y)
-    assert np.isclose(candidate.flags["predicted_bias_x_pix"], 0.25)
-    assert np.isclose(candidate.flags["predicted_bias_y_pix"], -0.10)
-    assert np.isclose(candidate.x, raw_x - 0.25)
-    assert np.isclose(candidate.y, raw_y + 0.10)
-    assert candidate.flags["centroid_bias_corrected"] is True
-    assert candidate.flags["bias_profile"] == "unit_test_psf"
+    assert candidates == []
 
 
-def test_extract_stars_rejects_mismatched_bias_profile_metadata(tmp_path):
-    profile_path = tmp_path / "bias_profile.json"
-    profile_path.write_text(
-        json.dumps(
-            {
-                "profile_rows": [
-                    {
-                        "fsg_x_pix": 2.0,
-                        "fsg_y_pix": 2.0,
-                        "fsg_dx_err_pix": 0.1,
-                        "fsg_dy_err_pix": 0.1,
-                    }
-                ]
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-
+def test_extract_stars_applies_centroid_covariance_floor():
+    image = np.zeros((5, 5), dtype=np.float64)
+    image[2, 1] = 6.0
+    image[2, 2] = 10.0
     cfg = _deep_update(
-        _extract_cfg("weighted_centroid", window_size=5),
-        {
-            "psf": {"active_model_key": "unit_test_psf"},
-            "extract": {
-                "bias_correction": {
-                    "enabled": True,
-                    "profile": None,
-                    "strict_centroid_check": True,
-                }
-            },
-            "bias_profiles": {
-                "by_psf_model": {
-                    "unit_test_psf": {
-                        "bias_table_path": str(profile_path),
-                        "calibration_key": "fsg",
-                        "centroid_method": "fixed_window_first_moment",
-                        "window_size": 5,
-                    }
-                }
-            },
-        },
+        _extract_cfg("weighted_centroid"),
+        {"extract": {"centroid_covariance": {"min_sigma_pix": 0.2}}},
     )
 
-    with pytest.raises(ValueError, match="centroid_method mismatch"):
+    candidates = extract_stars(_frame_from_image(image, noise_level=0.0), cfg=cfg)
+
+    assert len(candidates) == 1
+    assert np.all(np.linalg.eigvalsh(candidates[0].centroid_cov_pix) >= 0.2**2)
+
+
+def test_extract_stars_rejects_invalid_deblend_policy():
+    cfg = _deep_update(
+        _extract_cfg("weighted_centroid"),
+        {"extract": {"deblend": {"policy": "split"}}},
+    )
+
+    with pytest.raises(ValueError, match="extract.deblend.policy"):
         extract_stars(_frame_from_image(np.eye(5, dtype=np.float64) * 10.0), cfg=cfg)

@@ -51,6 +51,7 @@ def test_preprocess_applies_ordered_detector_calibration_chain():
         enable_flat_field=True,
         enable_bad_pixel_mask=True,
         enable_fpn_subtraction=True,
+        gain_e_per_dn=1.0,
     )
 
     pre = preprocess_frame(raw, calib=calib, cfg=cfg)
@@ -74,8 +75,9 @@ def test_preprocess_applies_ordered_detector_calibration_chain():
         "adc_clip",
         "saturation_guard",
         "bias_subtraction",
-        "dark_subtraction",
         "fpn_subtraction",
+        "adu_to_electron_conversion",
+        "dark_subtraction",
         "flat_field",
         "bad_pixel_mask",
         "background_subtraction",
@@ -86,6 +88,145 @@ def test_preprocess_applies_ordered_detector_calibration_chain():
         assert "path" in pre.preprocess_meta["calibration"][name]
     assert pre.preprocess_meta["num_bad_pixels"] == 1
     assert pre.preprocess_meta["num_invalid_pixels"] == 1
+
+
+def test_preprocess_converts_adu_to_electrons_with_global_gain():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[2.2, 4.4, 6.6]], dtype=np.float64),
+        time_s=0.0,
+        unit="adu",
+    )
+    cfg = _preprocess_cfg(
+        convert_to_electrons=True,
+        gain_e_per_dn=1.0 / 2.2,
+    )
+
+    pre = preprocess_frame(raw, calib={}, cfg=cfg)
+
+    assert np.allclose(pre.image, [[1.0, 2.0, 3.0]])
+    assert pre.preprocess_meta["input_unit"] == "adu"
+    assert pre.preprocess_meta["output_unit"] == "electron"
+    assert pre.preprocess_meta["noise_unit"] == "electron"
+    assert pre.preprocess_meta["variance_unit"] == "electron^2"
+    assert pre.preprocess_meta["adu_to_electron_conversion"] == {
+        "enabled": True,
+        "applied": True,
+        "input_unit": "adu",
+        "input_unit_effective": "adu",
+        "output_unit": "electron",
+        "gain_e_per_dn": 1.0 / 2.2,
+        "reason": "input_unit_adu",
+    }
+
+
+def test_preprocess_defaults_missing_unit_to_adu_for_electron_conversion():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[2.0, 4.0]], dtype=np.float64),
+        time_s=0.0,
+        unit=None,
+    )
+    cfg = _preprocess_cfg(
+        convert_to_electrons=True,
+        gain_e_per_dn=0.5,
+    )
+
+    pre = preprocess_frame(raw, calib={}, cfg=cfg)
+
+    assert np.allclose(pre.image, [[1.0, 2.0]])
+    conversion = pre.preprocess_meta["adu_to_electron_conversion"]
+    assert conversion["applied"] is True
+    assert conversion["input_unit"] is None
+    assert conversion["input_unit_effective"] == "adu"
+    assert conversion["reason"] == "missing_unit_defaulted_to_adu"
+
+
+def test_preprocess_treats_legacy_electron_or_adu_as_adu_for_conversion():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[2.0, 4.0]], dtype=np.float64),
+        time_s=0.0,
+        unit="electron_or_adu",
+    )
+    cfg = _preprocess_cfg(
+        convert_to_electrons=True,
+        gain_e_per_dn=0.5,
+    )
+
+    pre = preprocess_frame(raw, calib={}, cfg=cfg)
+
+    assert np.allclose(pre.image, [[1.0, 2.0]])
+    conversion = pre.preprocess_meta["adu_to_electron_conversion"]
+    assert conversion["applied"] is True
+    assert conversion["input_unit_effective"] == "adu"
+    assert conversion["reason"] == "legacy_electron_or_adu_treated_as_adu"
+
+
+def test_preprocess_keeps_electron_inputs_in_electron_space():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[1.0, 2.0]], dtype=np.float64),
+        time_s=0.0,
+        unit="electron",
+    )
+    cfg = _preprocess_cfg(convert_to_electrons=True)
+
+    pre = preprocess_frame(raw, calib={}, cfg=cfg)
+
+    assert np.allclose(pre.image, [[1.0, 2.0]])
+    assert pre.preprocess_meta["output_unit"] == "electron"
+    conversion = pre.preprocess_meta["adu_to_electron_conversion"]
+    assert conversion["applied"] is False
+    assert conversion["input_unit_effective"] == "electron"
+    assert conversion["reason"] == "input_already_electron"
+    assert "gain_e_per_dn" not in conversion
+
+
+def test_preprocess_rejects_unknown_unit_when_conversion_is_enabled():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[1.0]], dtype=np.float64),
+        time_s=0.0,
+        unit="counts",
+    )
+    cfg = _preprocess_cfg(
+        convert_to_electrons=True,
+        gain_e_per_dn=1.0,
+    )
+
+    with pytest.raises(ValueError, match="raw.unit"):
+        preprocess_frame(raw, calib={}, cfg=cfg)
+
+
+def test_preprocess_converts_after_adu_bias_and_fpn_before_electron_dark_and_flat():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[24.0]], dtype=np.float64),
+        time_s=0.0,
+        cadence_s=2.0,
+        unit="adu",
+    )
+    calib = {
+        "bias": np.array([[2.0]], dtype=np.float64),
+        "fpn_residual": np.array([[1.0]], dtype=np.float64),
+        "dark": np.array([[3.0]], dtype=np.float64),
+        "flat": np.array([[2.0]], dtype=np.float64),
+    }
+    cfg = _preprocess_cfg(
+        enable_bias_subtraction=True,
+        enable_fpn_subtraction=True,
+        convert_to_electrons=True,
+        gain_e_per_dn=0.5,
+        enable_dark_subtraction=True,
+        enable_flat_field=True,
+    )
+
+    pre = preprocess_frame(raw, calib=calib, cfg=cfg)
+
+    assert np.allclose(pre.image, [[2.25]])
+    assert pre.preprocess_meta["output_unit"] == "electron"
+    assert pre.preprocess_meta["calibration"]["dark"]["unit"] == "electron"
 
 
 def test_preprocess_adc_clip_clips_to_configured_bit_depth_without_masking():
@@ -268,7 +409,6 @@ def test_preprocess_calibration_preserves_extractable_star_flux_and_centroid():
             "centroid_method": "weighted_centroid",
             "bbox_expand": 0,
             "reject_edge_margin": 0,
-            "bias_correction": {"enabled": False},
         },
     }
 
@@ -424,8 +564,36 @@ def test_poisson_variance_model_adds_dark_shot_noise_from_cadence():
 
     pre = preprocess_frame(raw, calib=calib, cfg=cfg)
 
-    assert np.allclose(pre.image, [[94.0]])
+    assert np.allclose(pre.image, [[97.0]])
     assert np.allclose(pre.variance_map, [[54.0]])
+    assert pre.preprocess_meta["variance_components"]["dark_current_source"] == "calib.dark"
+
+
+def test_poisson_variance_model_uses_electron_space_after_gain_conversion():
+    raw = RawFrame(
+        detector_id=0,
+        image=np.array([[100.0]], dtype=np.float64),
+        time_s=0.0,
+        cadence_s=2.0,
+        unit="adu",
+    )
+    calib = {"dark": np.array([[3.0]], dtype=np.float64)}
+    cfg = _preprocess_cfg(
+        convert_to_electrons=True,
+        gain_e_per_dn=2.0,
+        enable_dark_subtraction=True,
+        enable_background_subtraction=False,
+        variance_model="poisson_read_noise",
+        read_noise_e=4.0,
+        quantization_noise_e=0.0,
+    )
+
+    pre = preprocess_frame(raw, calib=calib, cfg=cfg)
+
+    assert np.allclose(pre.image, [[194.0]])
+    assert np.allclose(pre.variance_map, [[216.0]])
+    assert pre.preprocess_meta["variance_unit"] == "electron^2"
+    assert pre.preprocess_meta["variance_components"]["gain_e_per_output_unit"] == 1.0
     assert pre.preprocess_meta["variance_components"]["dark_current_source"] == "calib.dark"
 
 
@@ -530,7 +698,6 @@ def test_extract_snr_uses_preprocess_poisson_noise_map():
             "centroid_method": "weighted_centroid",
             "bbox_expand": 0,
             "reject_edge_margin": 0,
-            "bias_correction": {"enabled": False},
         },
     }
 
