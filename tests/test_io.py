@@ -205,3 +205,14 @@ def test_load_npz_frame_reads_frame_truth_and_falls_back_when_absent(tmp_path):
     )
     raw_fallback = load_npz_frame(npz_without_truth)
     assert "truth_stars" not in raw_fallback.meta
+    assert raw_fallback.unit is None
+
+    npz_with_unit = tmp_path / "scope0_coadd_000002_000002.npz"
+    np.savez(
+        npz_with_unit,
+        images=np.zeros((1, 1, 5, 5), dtype=np.float32),
+        time_s=np.array([2.0]),
+        unit=np.array("adu"),
+    )
+    raw_with_unit = load_npz_frame(npz_with_unit)
+    assert raw_with_unit.unit == "adu"
