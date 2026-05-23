@@ -405,7 +405,7 @@ def load_npz_frame(npz_path: str, detector_id: int = 0) -> RawFrame:
 
     coadd_start = int(data["coadd_start"]) if "coadd_start" in data else None
     coadd_stop = int(data["coadd_stop"]) if "coadd_stop" in data else None
-    unit = str(data["unit"]) if "unit" in data else None
+    unit = str(data["unit"]) if "unit" in data else "adu"
 
     truth_stars = None
     truth_payload = None

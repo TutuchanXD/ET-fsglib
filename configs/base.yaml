@@ -50,7 +50,7 @@ preprocess:
   background_mesh_size: 64
   variance_model: empirical_robust
   convert_to_electrons: true
-  gain_e_per_dn: 0.45454545454545453
+  gain_e_per_dn: 1.0
   read_noise_e: null
   quantization_noise_e: 0.0
   dark_current_e_per_s: null

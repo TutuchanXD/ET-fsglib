@@ -5,15 +5,17 @@ from fsglib.common.types import RawFrame, PreprocessedFrame
 
 
 _MIN_NOISE = 1.0e-6
-_ELECTRON_UNITS = {"e", "electron", "electrons"}
+_ELECTRON_UNITS = {"e", "electron", "electrons", "unit.electron", "unit.electrons"}
+_ADU_UNITS = {"adu", "dn", "unit.adu", "unit.dn", "electron_or_adu"}
 
 _CALIBRATION_ORDER = [
     "finite_mask",
     "adc_clip",
     "saturation_guard",
     "bias_subtraction",
-    "dark_subtraction",
     "fpn_subtraction",
+    "adu_to_electron_conversion",
+    "dark_subtraction",
     "flat_field",
     "bad_pixel_mask",
     "background_subtraction",
@@ -169,14 +171,43 @@ def _detector_positive_int(value: object, name: str) -> int | None:
     return int(numeric)
 
 
-def _unit_is_electron(unit: str | None) -> bool:
+def _classify_image_unit(unit: str | None) -> dict:
     if unit is None:
-        return False
-    return str(unit).strip().lower() in _ELECTRON_UNITS
+        return {
+            "kind": "adu",
+            "canonical_unit": "adu",
+            "reason": "missing_unit_defaulted_to_adu",
+        }
+
+    text = str(unit).strip().lower()
+    if text in _ELECTRON_UNITS:
+        return {
+            "kind": "electron",
+            "canonical_unit": "electron",
+            "reason": "input_already_electron",
+        }
+    if text in _ADU_UNITS:
+        reason = (
+            "legacy_electron_or_adu_treated_as_adu"
+            if text == "electron_or_adu"
+            else "input_unit_adu"
+        )
+        return {
+            "kind": "adu",
+            "canonical_unit": "adu",
+            "reason": reason,
+        }
+
+    allowed = sorted(_ADU_UNITS | _ELECTRON_UNITS)
+    raise ValueError(
+        "raw.unit must be a supported image unit when electron conversion or "
+        f"Poisson variance is enabled; got {unit!r}. Supported units: {allowed}"
+    )
 
 
 def _gain_e_per_image_unit(unit: str | None, cfg: dict) -> float:
-    if _unit_is_electron(unit):
+    unit_info = _classify_image_unit(unit)
+    if unit_info["kind"] == "electron":
         return 1.0
     return _positive_float(
         _preprocess_cfg(cfg).get("gain_e_per_dn"),
@@ -482,7 +513,6 @@ def _poisson_read_noise_variance_map(
                 "raw.cadence_s is required to propagate dark-current shot noise"
             )
         dark_e = np.maximum(dark_current_map, 0.0) * float(raw.cadence_s)
-        dark_e *= gain_e_per_output_unit
         dark_current_source = "calib.dark"
     elif (
         preprocess_cfg.get("dark_current_e_per_s") is not None
@@ -617,30 +647,6 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
     else:
         _record_calibration(calib, preprocess_meta, "bias", enabled=False, applied=False)
 
-    if preprocess_cfg.get("enable_dark_subtraction", False):
-        if raw.cadence_s is None:
-            raise ValueError(
-                "raw.cadence_s is required when preprocess.enable_dark_subtraction is true"
-            )
-        dark = _require_finite_float_map(
-            calib,
-            "dark",
-            "enable_dark_subtraction",
-            image_shape,
-        )
-        dark_current_map = dark
-        image = image - dark * float(raw.cadence_s)
-        _record_calibration(
-            calib,
-            preprocess_meta,
-            "dark",
-            enabled=True,
-            applied=True,
-            details={"shape": tuple(dark.shape), "cadence_s": float(raw.cadence_s)},
-        )
-    else:
-        _record_calibration(calib, preprocess_meta, "dark", enabled=False, applied=False)
-
     if preprocess_cfg.get("enable_fpn_subtraction", False):
         fpn = _require_finite_float_map(
             calib,
@@ -665,6 +671,63 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
             enabled=False,
             applied=False,
         )
+
+    conversion_enabled = bool(preprocess_cfg.get("convert_to_electrons", False))
+    conversion_meta = {
+        "enabled": conversion_enabled,
+        "applied": False,
+        "input_unit": raw.unit,
+        "input_unit_effective": raw.unit,
+        "output_unit": output_unit,
+    }
+    if conversion_enabled:
+        unit_info = _classify_image_unit(raw.unit)
+        conversion_meta["input_unit_effective"] = unit_info["canonical_unit"]
+        conversion_meta["reason"] = unit_info["reason"]
+        if unit_info["kind"] == "electron":
+            output_unit = "electron"
+            conversion_meta["output_unit"] = output_unit
+        else:
+            gain_e_per_dn = _gain_e_per_image_unit(raw.unit, cfg)
+            image *= gain_e_per_dn
+            output_unit = "electron"
+            conversion_meta["applied"] = True
+            conversion_meta["output_unit"] = output_unit
+            conversion_meta["gain_e_per_dn"] = float(gain_e_per_dn)
+    preprocess_meta["output_unit"] = output_unit
+    preprocess_meta["adu_to_electron_conversion"] = conversion_meta
+
+    if preprocess_cfg.get("enable_dark_subtraction", False):
+        if raw.cadence_s is None:
+            raise ValueError(
+                "raw.cadence_s is required when preprocess.enable_dark_subtraction is true"
+            )
+        dark = _require_finite_float_map(
+            calib,
+            "dark",
+            "enable_dark_subtraction",
+            image_shape,
+        )
+        dark_current_map = dark
+        gain_e_per_output_unit = _gain_e_per_image_unit(output_unit, cfg)
+        dark_e = dark * float(raw.cadence_s)
+        image = image - (dark_e / gain_e_per_output_unit)
+        _record_calibration(
+            calib,
+            preprocess_meta,
+            "dark",
+            enabled=True,
+            applied=True,
+            details={
+                "shape": tuple(dark.shape),
+                "cadence_s": float(raw.cadence_s),
+                "map_unit": "electron_per_second",
+                "unit": output_unit or "image_unit",
+                "gain_e_per_output_unit": float(gain_e_per_output_unit),
+            },
+        )
+    else:
+        _record_calibration(calib, preprocess_meta, "dark", enabled=False, applied=False)
 
     image_for_photon_noise = image
     flat_response_for_variance = None
@@ -722,33 +785,6 @@ def preprocess_frame(raw: RawFrame, calib: dict, cfg: dict) -> PreprocessedFrame
             enabled=False,
             applied=False,
         )
-
-    conversion_enabled = bool(preprocess_cfg.get("convert_to_electrons", False))
-    conversion_meta = {
-        "enabled": conversion_enabled,
-        "applied": False,
-        "input_unit": raw.unit,
-        "output_unit": output_unit,
-    }
-    if conversion_enabled:
-        gain_e_per_dn = _gain_e_per_image_unit(raw.unit, cfg)
-        conversion_meta["gain_e_per_dn"] = float(gain_e_per_dn)
-        if _unit_is_electron(raw.unit):
-            output_unit = "electron"
-            conversion_meta["output_unit"] = output_unit
-            conversion_meta["reason"] = "input_already_electron"
-        else:
-            photon_noise_aliases_image = image_for_photon_noise is image
-            image *= gain_e_per_dn
-            if not photon_noise_aliases_image:
-                image_for_photon_noise *= gain_e_per_dn
-            if dark_current_map is not None:
-                dark_current_map = dark_current_map * gain_e_per_dn
-            output_unit = "electron"
-            conversion_meta["applied"] = True
-            conversion_meta["output_unit"] = output_unit
-    preprocess_meta["output_unit"] = output_unit
-    preprocess_meta["adu_to_electron_conversion"] = conversion_meta
 
     image = np.where(valid_mask, image, 0.0)
 
