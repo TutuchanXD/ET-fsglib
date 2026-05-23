@@ -248,7 +248,8 @@ Each `layout.detectors[]` entry supports:
 | `preprocess.sigma_clip_max_iters` | int | `3` | active | Maximum robust sigma-clipping iterations for background/noise estimation. |
 | `preprocess.background_mesh_size` | int | `64` | active with `mesh_median` | Mesh cell size in pixels for local median background and empirical local RMS estimates. |
 | `preprocess.variance_model` | string | `empirical_robust` | active | Supported values: `empirical_robust` and `poisson_read_noise`. `noise_map` is always `sqrt(variance_map)`. |
-| `preprocess.gain_e_per_dn` | float or null | `null` | active with `poisson_read_noise` | Electrons per DN/ADU for non-electron inputs. Required when `variance_model=poisson_read_noise` and the raw unit is not an electron unit. |
+| `preprocess.convert_to_electrons` | bool | `true` | active | If true, converts calibrated ADU/DN-like image units to electrons before dark subtraction, flat-fielding, background estimation, and noise estimation. |
+| `preprocess.gain_e_per_dn` | float or null | `1.0` | active with `convert_to_electrons` or `poisson_read_noise` | Electrons per DN/ADU for non-electron inputs. Customer YAML files may override this detector gain. Required when electron conversion is enabled, or when `variance_model=poisson_read_noise` and the raw/output unit is not an electron unit. |
 | `preprocess.read_noise_e` | float or null | `null` | active with `poisson_read_noise` | Read noise in electrons. Required, and may be zero for analytic/noiseless fixtures. |
 | `preprocess.quantization_noise_e` | float | `0.0` | active with `poisson_read_noise` | Optional quantization noise term in electrons. |
 | `preprocess.dark_current_e_per_s` | float or null | `null` | active with `poisson_read_noise` | Optional scalar dark-current shot-noise source in electrons per second, used only when the dark mean has been explicitly removed. Loaded dark-current calibration maps are preferred and use `raw.cadence_s`. |
@@ -258,13 +259,22 @@ The default `empirical_robust` variance model estimates RMS with a MAD-based
 robust sigma after the configured background subtraction; `mesh_median`
 produces spatially varying background and noise maps. `poisson_read_noise`
 computes variance from photon counts, loaded dark-current maps scaled by
-`raw.cadence_s` when present, read noise, and quantization noise. For DN/ADU
-inputs the calculation uses `preprocess.gain_e_per_dn` internally and converts
-`variance_map` back to the output image unit squared; `PreprocessedFrame.image`,
-`background`, and `noise_map` remain in the input image unit. Photon/read/dark
-variance is propagated through flat-response division when flat-field correction
-is enabled, but flat-field uncertainty itself is not included yet and is reported
-in metadata as disabled. Calibration asset paths are loaded by
+`raw.cadence_s` when present, read noise, and quantization noise. With
+`preprocess.convert_to_electrons=true`, missing raw units and legacy
+`electron_or_adu` units are treated as ADU; explicit `adu`/`dn` inputs are
+converted with `preprocess.gain_e_per_dn`; explicit electron units are treated as
+already converted. Unknown explicit units raise an error. Bias and FPN maps are
+subtracted in ADU before gain conversion; dark-current maps and read-noise
+configuration are interpreted in electrons after conversion. If electron
+conversion is explicitly disabled, loaded dark-current maps are still treated as
+electrons per second and converted back to the current output unit with
+`preprocess.gain_e_per_dn` before subtraction. Flat-field response is
+dimensionless and is applied after the unit conversion step, so the default path
+applies flat-fielding in electron space. `PreprocessedFrame.image`,
+`background`, `noise_map`, and `variance_map` are reported in electron units
+after conversion. Photon/read/dark variance is propagated through flat-response
+division when flat-field correction is enabled, but flat-field uncertainty itself
+is not included yet and is reported in metadata as disabled. Calibration asset paths are loaded by
 `build_models(cfg)` into
 `models["calib"]`; enabled products with missing paths, missing files, wrong
 rank, or shape mismatches raise explicit errors. `.npz` assets must either use

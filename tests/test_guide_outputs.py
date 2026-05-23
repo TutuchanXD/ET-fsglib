@@ -5,7 +5,13 @@ from types import SimpleNamespace
 import numpy as np
 
 from fsglib.common.debug import _write_attitude_debug_artifacts
-from fsglib.common.types import AttitudeSolution, MatchedStar, MatchingResult, ObservedStar
+from fsglib.common.types import (
+    AttitudeSolution,
+    MatchedStar,
+    MatchingResult,
+    ObservedStar,
+    RawFrame,
+)
 from fsglib.ephemeris.types import ReferenceStar
 from fsglib.pipeline import run_guide_init, run_guide_truth_noise
 from fsglib.pipeline.guide_outputs import (
@@ -455,6 +461,113 @@ def test_build_observed_stars_passes_loaded_calibration_to_preprocess(tmp_path, 
     assert observed[0].y == 22.0
     assert detector_stats["detA"]["num_candidates_selected"] == 1
     assert detector_contexts["detA"]["raw"] is raw
+
+
+def test_build_observed_stars_converts_adu_frame_before_extraction(tmp_path, monkeypatch):
+    dataset_root = tmp_path / "dataset"
+    frame_dir = dataset_root / "batch0" / "frames"
+    frame_dir.mkdir(parents=True)
+    (frame_dir / "frame000.npz").write_bytes(b"placeholder")
+
+    image = np.zeros((9, 9), dtype=np.float64)
+    image[4, 4] = 100.0
+    image[4, 5] = 60.0
+    image[5, 4] = 40.0
+    raw = RawFrame(
+        detector_id="detA",
+        image=image,
+        time_s=0.0,
+        cadence_s=1.0,
+        unit=None,
+    )
+
+    def pixel_to_body_los(_detector_id, x, y):
+        los = np.array([float(x) * 1e-3, float(y) * 1e-3, 1.0], dtype=np.float64)
+        return los / np.linalg.norm(los)
+
+    geometry_adapter = SimpleNamespace(
+        pixel_to_focal=lambda _detector_id, x, y: SimpleNamespace(
+            x_mm=float(x) * 0.01,
+            y_mm=float(y) * 0.01,
+            field_x_deg=float(x) * 1e-3,
+            field_y_deg=float(y) * 1e-3,
+        ),
+        pixel_to_body_los=pixel_to_body_los,
+    )
+
+    cfg = {
+        "guide_init": {
+            "dataset_root": str(dataset_root),
+            "detector_batches": [{"detector_id": "detA", "batch_name": "batch0"}],
+            "frame_index": 0,
+            "max_observed_per_detector": 5,
+        },
+        "detector": {
+            "adc_bit_depth": 12,
+            "adc_min_value": 0.0,
+        },
+        "preprocess": {
+            "enable_adc_clip": True,
+            "enable_saturation_guard": False,
+            "enable_bias_subtraction": False,
+            "enable_fpn_subtraction": False,
+            "convert_to_electrons": True,
+            "gain_e_per_dn": 0.5,
+            "enable_dark_subtraction": False,
+            "enable_flat_field": False,
+            "enable_bad_pixel_mask": False,
+            "enable_background_subtraction": False,
+            "variance_model": "poisson_read_noise",
+            "read_noise_e": 1.0,
+            "quantization_noise_e": 0.0,
+        },
+        "extract": {
+            "detection_image": "snr",
+            "seed_threshold_sigma": 5.0,
+            "grow_threshold_sigma": 3.0,
+            "min_area": 1,
+            "max_area": 20,
+            "centroid_method": "weighted_centroid",
+            "centroid_window": {"center": "peak", "size": 5},
+            "bbox_expand": 0,
+            "reject_edge_margin": 0,
+            "max_ellipticity": 1.0,
+            "reject_degenerate_sources": False,
+            "max_sharpness": None,
+            "reject_artifact_mask_overlap": False,
+            "centroid_covariance": {"min_sigma_pix": 0.0, "jacobian_step_pix": 0.01},
+            "deblend": {"enabled": True, "policy": "flag_only"},
+        },
+        "attitude": {"weight_mode": "variance_snr_hybrid"},
+    }
+
+    monkeypatch.setattr(run_guide_init, "load_npz_frame", lambda *_args, **_kwargs: raw)
+
+    observed, detector_stats, detector_contexts = run_guide_init._build_observed_stars(
+        cfg,
+        transformer=object(),
+        sim_to_detector_map={
+            "detA": {
+                "kind": "offset",
+                "offset_x_pix": 0.0,
+                "offset_y_pix": 0.0,
+            }
+        },
+        geometry_adapter=geometry_adapter,
+        calib={},
+    )
+
+    preprocessed = detector_contexts["detA"]["preprocessed"]
+    conversion = preprocessed.preprocess_meta["adu_to_electron_conversion"]
+    assert conversion["applied"] is True
+    assert conversion["reason"] == "missing_unit_defaulted_to_adu"
+    assert conversion["gain_e_per_dn"] == 0.5
+    assert preprocessed.preprocess_meta["output_unit"] == "electron"
+    assert np.isclose(preprocessed.image[4, 4], 50.0)
+    assert detector_stats["detA"]["num_candidates_selected"] == 1
+    assert len(observed) == 1
+    assert observed[0].flux > 0.0
+    assert observed[0].flags["weight_source"] == "variance_snr_hybrid"
 
 
 def test_run_guide_first_frame_truth_noise_uses_adapter_output_only(tmp_path, monkeypatch):

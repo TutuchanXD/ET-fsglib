@@ -49,7 +49,8 @@ preprocess:
   sigma_clip_max_iters: 3
   background_mesh_size: 64
   variance_model: empirical_robust
-  gain_e_per_dn: null
+  convert_to_electrons: true
+  gain_e_per_dn: 1.0
   read_noise_e: null
   quantization_noise_e: 0.0
   dark_current_e_per_s: null
