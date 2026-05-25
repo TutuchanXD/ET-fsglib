@@ -528,10 +528,14 @@ def run_guide_first_frame_init(cfg: dict, *, include_debug_context: bool = False
         result["debug_context"] = {
             "detectors": {
                 detector_id: {
+                    "raw": context["raw"],
+                    "preprocessed": context["preprocessed"],
                     "image": context["raw"].image,
                     "preprocessed_image": context["preprocessed"].image,
                     "frame_path": context["frame_path"],
                     "batch_path": context["batch_path"],
+                    "all_candidates": context.get("all_candidates", []),
+                    "selected_candidates": context.get("selected_candidates", []),
                     "num_candidates_raw": context["num_candidates_raw"],
                     "num_candidates_selected": context["num_candidates_selected"],
                 }

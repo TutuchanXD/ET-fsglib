@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from fsglib.common.types import PreprocessedFrame
+from fsglib.extract import pipeline as extract_pipeline
 from fsglib.extract.pipeline import extract_stars
 
 
@@ -48,6 +49,27 @@ def _extract_cfg(method: str, window_size: int = 5) -> dict:
             "deblend": {"enabled": True, "policy": "flag_only"},
         },
     }
+
+
+def test_hysteresis_segments_keeps_compact_label_records():
+    snr_map = np.zeros((9, 9), dtype=np.float64)
+    for y, x in ((1, 1), (1, 7), (7, 1), (7, 7)):
+        snr_map[y, x] = 6.0
+    valid_mask = np.ones_like(snr_map, dtype=bool)
+
+    labeled, segments = extract_pipeline._hysteresis_segments(
+        snr_map,
+        valid_mask,
+        seed_th=5.0,
+        grow_th=5.0,
+    )
+
+    assert labeled.shape == snr_map.shape
+    assert len(segments) == 4
+    label_id, num_seed_pixels, slices = segments[0]
+    assert isinstance(label_id, int)
+    assert num_seed_pixels == 1
+    assert all(isinstance(item, slice) for item in slices)
 
 
 def test_extract_stars_weighted_centroid_uses_segment_pixels_only():

@@ -327,6 +327,8 @@ def test_run_guide_first_frame_init_debug_context_is_opt_in(tmp_path, monkeypatc
             "preprocessed": SimpleNamespace(image=np.ones((2, 2))),
             "frame_path": str(tmp_path / "frame.npz"),
             "batch_path": str(tmp_path / "batch0"),
+            "all_candidates": [SimpleNamespace(source_id=1)],
+            "selected_candidates": [SimpleNamespace(source_id=1)],
             "num_candidates_raw": 1,
             "num_candidates_selected": 1,
         }
@@ -396,6 +398,10 @@ def test_run_guide_first_frame_init_debug_context_is_opt_in(tmp_path, monkeypatc
     assert "geometry_model" not in default_result
     assert default_result["geometry_adapter"]["mode"] == "exact_et_focalplane"
     assert debug_result["debug_context"]["observed_stars"] is observed
+    assert debug_result["debug_context"]["detectors"]["detA"]["all_candidates"] == detector_contexts["detA"]["all_candidates"]
+    assert debug_result["debug_context"]["detectors"]["detA"]["selected_candidates"] == detector_contexts["detA"]["selected_candidates"]
+    assert debug_result["debug_context"]["detectors"]["detA"]["raw"] is detector_contexts["detA"]["raw"]
+    assert debug_result["debug_context"]["detectors"]["detA"]["preprocessed"] is detector_contexts["detA"]["preprocessed"]
 
 
 def test_build_observed_stars_passes_loaded_calibration_to_preprocess(tmp_path, monkeypatch):

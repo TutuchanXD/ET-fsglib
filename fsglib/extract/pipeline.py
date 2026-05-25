@@ -121,22 +121,30 @@ def _hysteresis_segments(
     valid_mask: np.ndarray,
     seed_th: float,
     grow_th: float,
-) -> list[tuple[np.ndarray, int]]:
+) -> tuple[np.ndarray, list[tuple[int, int, tuple[slice, slice]]]]:
     seed_mask = valid_mask & (snr_map > seed_th)
     grow_mask = valid_mask & (snr_map > grow_th)
     structure = np.ones((3, 3), dtype=bool)
     labeled_grow, _ = ndimage.label(grow_mask, structure=structure)
-    seed_labels = np.unique(labeled_grow[seed_mask])
+    seed_label_values = np.asarray(labeled_grow[seed_mask], dtype=np.int64)
+    if seed_label_values.size == 0:
+        return labeled_grow, []
 
-    segments: list[tuple[np.ndarray, int]] = []
-    for label_id in seed_labels:
-        if int(label_id) == 0:
+    seed_counts = np.bincount(seed_label_values)
+    object_slices = ndimage.find_objects(labeled_grow)
+
+    segments: list[tuple[int, int, tuple[slice, slice]]] = []
+    for label_id, num_seed_pixels in enumerate(seed_counts):
+        if label_id == 0 or num_seed_pixels <= 0:
             continue
-        seg = labeled_grow == label_id
-        num_seed_pixels = int(np.count_nonzero(seed_mask & seg))
-        if num_seed_pixels > 0:
-            segments.append((seg, num_seed_pixels))
-    return segments
+        object_index = label_id - 1
+        if object_index >= len(object_slices):
+            continue
+        slices = object_slices[object_index]
+        if slices is None:
+            continue
+        segments.append((int(label_id), int(num_seed_pixels), (slices[0], slices[1])))
+    return labeled_grow, segments
 
 
 def _variance_array(frame: PreprocessedFrame) -> np.ndarray:
@@ -480,17 +488,26 @@ def extract_stars(frame: PreprocessedFrame, cfg: dict) -> list[StarCandidate]:
             "extract.seed_threshold_sigma"
         )
 
-    segments = _hysteresis_segments(snr_map, mask, seed_th, grow_th)
+    labeled_segments, segments = _hysteresis_segments(snr_map, mask, seed_th, grow_th)
     candidates = []
 
-    for seg, num_seed_pixels in segments:
-        ys, xs = np.where(seg)
+    for label_id, num_seed_pixels, segment_slices in segments:
+        y_slice, x_slice = segment_slices
+        local_seg = labeled_segments[y_slice, x_slice] == label_id
+        ys_local, xs_local = np.where(local_seg)
+        y_offset = 0 if y_slice.start is None else int(y_slice.start)
+        x_offset = 0 if x_slice.start is None else int(x_slice.start)
+        ys = ys_local + y_offset
+        xs = xs_local + x_offset
         if len(xs) == 0:
             continue
 
         area = len(xs)
         if area < extract_cfg["min_area"] or area > extract_cfg["max_area"]:
             continue
+
+        seg = np.zeros_like(mask, dtype=bool)
+        seg[y_slice, x_slice] = local_seg
 
         peak = float(np.max(image[seg]))
         peak_index = int(np.argmax(image[seg]))
