@@ -268,7 +268,7 @@ def _build_truth_noise_observed(
     return observed, detector_stats, detector_contexts
 
 
-def run_guide_first_frame_truth_noise(cfg: dict) -> dict:
+def run_guide_first_frame_truth_noise(cfg: dict, *, include_debug_context: bool = False) -> dict:
     helper_cfg = _helper_cfg(cfg)
     registry, transformer, catalog, GaiaSourceFilter = _load_et_coord(helper_cfg)
     geometry_adapter = build_exact_focalplane_geometry_adapter(helper_cfg, registry, transformer)
@@ -354,7 +354,7 @@ def run_guide_first_frame_truth_noise(cfg: dict) -> dict:
 
     guide_cfg = cfg["guide_truth_noise"]
     geometry_payload = geometry_adapter.serialize()
-    return {
+    result = {
         "solution": solution,
         "matching": matching,
         "observed_count": len(observed),
@@ -422,3 +422,23 @@ def run_guide_first_frame_truth_noise(cfg: dict) -> dict:
             "max_observed_per_detector": int(guide_cfg.get("max_observed_per_detector", 0)),
         },
     }
+    if include_debug_context:
+        result["debug_context"] = {
+            "detectors": {
+                detector_id: {
+                    "raw": context.get("raw"),
+                    "image": context["raw"].image,
+                    "frame_path": context["frame_path"],
+                    "batch_path": context["batch_path"],
+                    "all_candidates": context.get("all_candidates", []),
+                    "selected_candidates": context.get("selected_candidates", []),
+                    "num_candidates_raw": context["num_candidates_raw"],
+                    "num_candidates_selected": context["num_candidates_selected"],
+                }
+                for detector_id, context in detector_contexts.items()
+            },
+            "observed_stars": observed,
+            "reference_stars": reference,
+        }
+
+    return result

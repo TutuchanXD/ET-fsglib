@@ -522,6 +522,20 @@ base key only when the matcher is invoked as a reacquire fallback.
 `seed_attitude_only` for local reacquire; projector-backed seed-attitude pixel
 reprojection is tracked as follow-up work.
 
+### `match.lost_in_space`
+
+| Key | Type | Default | Status | Description |
+|-----|------|---------|--------|-------------|
+| `match.lost_in_space.max_observed_stars` | int | `20` | active | Brightest observed stars used when building lost-in-space seed hypotheses. |
+| `match.lost_in_space.pair_angle_tolerance_arcsec` | float | `120.0` | active | Angular tolerance for pair-angle catalog queries. |
+| `match.lost_in_space.max_seed_candidates` | int | `500` | active | Maximum seed catalog mappings retained before scoring. |
+| `match.lost_in_space.seed_residual_gate_arcsec` | float | `180.0` | active | Maximum residual allowed for a four-star seed attitude. |
+| `match.lost_in_space.expand_residual_gate_arcsec` | float | `240.0` | active | Angular residual gate used when expanding the selected seed attitude. |
+| `match.lost_in_space.min_support` | int | `match.validate_min_support` | active | Minimum expanded matches required. Omitted from `base.yaml` so it follows `match.validate_min_support`. |
+| `match.lost_in_space.ambiguity_ratio` | float | `0.98` | active | Rejects close competing lost-in-space candidates with different catalog assignments. |
+| `match.lost_in_space.ambiguity_rms_epsilon_arcsec` | float | `1.0e-6` | active | Absolute RMS tolerance used by ambiguity rejection. |
+| `match.lost_in_space.score_residual_scale_arcsec` | float | `1000.0` | active | Residual scale used in the final lost-in-space score. |
+
 ### Deprecated Triangle Keys
 
 | Key | Type | Status | Description |
@@ -610,8 +624,8 @@ magnitude when available, and the `weight_source`/`flux_weight` used for
 | `attitude.outlier_max_reject_per_iteration` | int | `1` | active | Maximum matched stars to reject per robust iteration; `<=0` allows all current outliers to be rejected together. |
 | `attitude.min_active_detectors_valid` | int/null | `null` | active | Optional minimum active detector count required for `VALID`; null records detector diversity without enforcing a hard detector-diversity gate. |
 | `attitude.max_iterations` | int | `5` | active | Maximum robust solve/rejection iterations for PR20 attitude validation. |
-| `attitude.quest_tol` | float | `1e-12` | active | Newton tolerance for QUEST characteristic-root solve. Not written in `base.yaml` yet. |
-| `attitude.quest_max_iter` | int | `50` | active | Maximum QUEST Newton iterations. Not written in `base.yaml` yet. |
+| `attitude.quest_tol` | float | `1e-12` | active | Newton tolerance for QUEST characteristic-root solve. |
+| `attitude.quest_max_iter` | int | `50` | active | Maximum QUEST Newton iterations. |
 
 ## `metrics`
 

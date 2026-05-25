@@ -28,6 +28,15 @@ def _memory_limit_gb(default_memory_gb: float) -> dict[str, Any]:
             "fraction": None,
         }
 
+    if default_memory_gb <= 0:
+        return {
+            "requested_gb": 0.0,
+            "source": "disabled_default",
+            "available_gb": _read_mem_available_gb(),
+            "reserve_gb": None,
+            "fraction": None,
+        }
+
     available_gb = _read_mem_available_gb()
     if available_gb is None:
         return {

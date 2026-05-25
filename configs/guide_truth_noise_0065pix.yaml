@@ -1,18 +1,9 @@
-project:
-  name: fsglib_guide_truth_noise_0065pix
-
 guide_truth_noise:
   dataset_root: /home/cxgao/Results/FSG_guide_sims_legacy_20260508/guide_det_v1_noise_psf_6s
-  frame_index: 0
   max_observed_per_detector: 100
-  los_geometry_mode: exact_et_focalplane
-  frame_alignment_grid_size: 13
   catalog_g_mag_max: 12.5
   reference_topk_per_detector: 260
-  target_epoch: 2000.0
-  centroid_noise_mean_pix: 0.0
   centroid_noise_sigma_pix: 0.065
-  centroid_noise_space: detector_pixel
   random_seed: 20260326
   detector_batches:
     - detector_id: guide_left
@@ -31,45 +22,10 @@ et_coord:
 
 match:
   algorithm: predicted_position_and_local_pyramid
-  mode: init
-  init_max_catalog_radius_deg: 1.5
-  init_bright_star_topk: 20
-  pair_angle_tol_arcsec: 120.0
-  hypothesis_topk: 50
-  validate_max_residual_arcsec: 60.0
   validate_max_residual_pix: 10.0
-  validate_min_support: 5
-  enforce_unique_assignment: true
   local_pyramid:
-    enabled: false
-    max_observed_stars: 40
-    max_reference_stars: 300
-    seed_scopes: ["single_detector", "mixed_detector"]
-    pair_angle_tol_arcsec_single_detector: 120.0
-    pair_angle_tol_arcsec_mixed_detector: 300.0
-    seed_rms_gate_arcsec: 60.0
-    seed_max_gate_arcsec: 180.0
-    expansion_policy: predicted_xy
-    geometry_only_allowed: false
-    reacquire_expansion_policy: seed_attitude_only
-    reacquire_geometry_only_allowed: true
-    expand_angular_gate_arcsec: 120.0
     expand_pixel_gate_pix: 10.0
-    min_expanded_matches: 5
-    ambiguity_min_score_margin: 1.0
-    detector_mean_warn_pix: 5.0
-    detector_mean_reject_pix: 25.0
-    detector_rms_reject_pix: 25.0
-    detector_max_reject_pix: 50.0
-    mixed_detector_reject_on_detector_warning: true
-    photometric_rank_weight: 0.0
-    seed_consistency_penalty: 1.0e-6
-
-attitude:
-  outlier_reject_enable: true
-  outlier_max_residual_arcsec: 30.0
 
 evaluation:
   guide_error_audit:
     enabled: true
-    truth_match_radius_pix: 3.0

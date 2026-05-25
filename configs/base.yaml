@@ -97,6 +97,11 @@ match:
     enabled: false
     max_observed_stars: 40
     max_reference_stars: 300
+    max_observed_pyramids: 5000
+    max_candidates_per_observed_seed: 200
+    max_seed_attitudes: 2000
+    min_edge_arcsec: 0.0
+    max_edge_deg: .inf
     seed_scopes: ["single_detector", "mixed_detector"]
     pair_angle_tol_arcsec_single_detector: 120.0
     pair_angle_tol_arcsec_mixed_detector: 300.0
@@ -117,6 +122,15 @@ match:
     mixed_detector_reject_on_detector_warning: true
     photometric_rank_weight: 0.0
     seed_consistency_penalty: 1.0e-6
+  lost_in_space:
+    max_observed_stars: 20
+    pair_angle_tolerance_arcsec: 120.0
+    max_seed_candidates: 500
+    seed_residual_gate_arcsec: 180.0
+    expand_residual_gate_arcsec: 240.0
+    ambiguity_ratio: 0.98
+    ambiguity_rms_epsilon_arcsec: 1.0e-6
+    score_residual_scale_arcsec: 1000.0
 
 tracking:
   search_radius_pix: 10.0
@@ -167,6 +181,8 @@ attitude:
   outlier_max_reject_per_iteration: 1
   min_active_detectors_valid: null
   max_iterations: 5
+  quest_tol: 1.0e-12
+  quest_max_iter: 50
 
 metrics:
   enable_truth_compare: true
@@ -196,6 +212,9 @@ evaluation:
     config_xlsx: "/home/cxgao/ET/FSG/fsgsim/config/et_100_det_inputs_1h.xlsx"
     psf_field_id: 6
     mag_type: "ET"
+  guide_error_audit:
+    enabled: false
+    truth_match_radius_pix: 3.0
 
 logging:
   level: INFO
