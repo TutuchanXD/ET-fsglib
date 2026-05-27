@@ -223,14 +223,14 @@ Each `layout.detectors[]` entry supports:
 | Key | Type | Default | Status | Description |
 |-----|------|---------|--------|-------------|
 | `psf.active_model_key` | string or null | `null` | declared | Names the active PSF model for audit and future template selection. It does not change the default `weighted_centroid` path. |
-| `psf.template_bundle_path` | path string or null | `null` | reserved | Required when `extract.centroid_method=psf_template_fit`; PR13 defines the interface, while actual Photsim7 PSF-template fitting is deferred to #89. |
+| `psf.template_bundle_path` | path string or null | `null` | reserved | Required when `extract.centroid_method=psf_template_fit`; the interface is reserved, while actual Photsim7 PSF-template fitting is deferred to #89. |
 
 ## `preprocess`
 
 | Key | Type | Default | Status | Description |
 |-----|------|---------|--------|-------------|
 | `preprocess.enable_background_subtraction` | bool | `true` | active | If true, subtracts the configured background model from finite pixels after detector calibration. |
-| `preprocess.enable_bias_subtraction` | bool | `true` | active | If true, subtracts `preprocess.bias_frame_path` from the raw image before dark/FPN/flat correction. `base.yaml` points to a no-op 2049-pixel PR9 fake asset. |
+| `preprocess.enable_bias_subtraction` | bool | `true` | active | If true, subtracts `preprocess.bias_frame_path` from the raw image before dark/FPN/flat correction. `base.yaml` points to a no-op 2049-pixel fake asset. |
 | `preprocess.bias_frame_path` | path string or null | local fake 2049 asset | active with bias subtraction | `.npy` or `.npz` 2-D finite numeric bias frame. Missing path raises an error when enabled. |
 | `preprocess.enable_dark_subtraction` | bool | `true` | active | If true, subtracts `preprocess.dark_current_path * raw.cadence_s`. Missing `raw.cadence_s` raises an error. |
 | `preprocess.dark_current_path` | path string or null | local fake 2049 asset | active with dark subtraction | `.npy` or `.npz` 2-D finite numeric dark-current map in image units per second. |
@@ -238,7 +238,7 @@ Each `layout.detectors[]` entry supports:
 | `preprocess.flat_field_path` | path string or null | local fake 2049 asset | active with flat field | `.npy` or `.npz` 2-D numeric flat/PRNU response map. Positive finite pixels are used as divisors. |
 | `preprocess.enable_bad_pixel_mask` | bool | `true` | active | If true, applies `preprocess.bad_pixel_mask_path`; `true` or `1` means bad and sets `valid_mask=false`. |
 | `preprocess.bad_pixel_mask_path` | path string or null | local fake 2049 asset | active with bad-pixel mask | `.npy` or `.npz` 2-D bool or numeric 0/1 mask matching the raw image shape. |
-| `preprocess.enable_fpn_subtraction` | bool | `true` | active | If true, subtracts an additive fixed-pattern residual map before flat-field correction. `base.yaml` points to a no-op 2049-pixel PR9 fake asset. |
+| `preprocess.enable_fpn_subtraction` | bool | `true` | active | If true, subtracts an additive fixed-pattern residual map before flat-field correction. `base.yaml` points to a no-op 2049-pixel fake asset. |
 | `preprocess.fpn_residual_map_path` | path string or null | local fake 2049 asset | active with FPN subtraction | `.npy` or `.npz` 2-D finite numeric residual map matching the raw image shape. |
 | `preprocess.enable_adc_clip` | bool | `true` | active | If true, clips finite raw input pixels into `[detector.adc_min_value, detector.saturation_value]` before calibration/background estimation. |
 | `preprocess.enable_saturation_guard` | bool | `true` | active | If true, removes saturated pixels from `valid_mask` and records `artifact_masks["saturation_guard"]`. |
@@ -281,11 +281,11 @@ rank, or shape mismatches raise explicit errors. `.npz` assets must either use
 the `data` array key or contain exactly one array. Local calibration products
 should live outside the source repository, for example under an external
 `fsglib-data/calibration/` asset root, and be referenced by YAML path. The
-default `base.yaml` paths use PR9 fake 2049-pixel no-op assets; loading those
+default `base.yaml` paths use fake 2049-pixel no-op assets; loading those
 assets emits a `RuntimeWarning` so precision runs do not silently use fake
 calibration.
 
-PR11 applies ADC clipping before detector calibration as an input guard. The
+ADC clipping is applied before detector calibration as an input guard. The
 authoritative detector ADC saturation simulation belongs in Photsim7; `fsglib`
 keeps this guard so real or externally simulated inputs are bounded and
 saturated pixels are tracked consistently. With the default 12-bit
@@ -301,11 +301,11 @@ Cosmic-ray injection is intentionally a simulation-side concern, not an
 artifact masks through `PreprocessedFrame.artifact_masks`; simulation pipelines
 should own event-rate sampling, stamp placement, rotation, resampling, and ADC
 ordering. Real observation frames are not expected to provide cosmic-ray masks,
-so PR11 controls cosmic-ray contamination only through ADC saturation guards,
+so `fsglib` controls cosmic-ray contamination only through ADC saturation guards,
 degenerate-source rejection, sharpness limits, artifact-mask overlap when masks
 exist, and downstream fit/match residual checks. A cosmic ray that hits a real
 star but remains unsaturated and morphologically star-like is not guaranteed to
-be rejected by PR11.
+be rejected automatically.
 
 The external cosmic-ray data assets prepared for simulation-side use are now
 owned by Photsim7-data:
@@ -344,7 +344,7 @@ is a guide-detector derivative stored outside this source repository.
 Extraction uses the SNR image for segmentation. Seed and grow masks both use
 strict `>` threshold comparisons, and grow pixels must be connected to at least
 one seed pixel. Connectivity is 8-connected. If multiple seed pixels fall in the
-same grown connected component, the default PR13 behavior still returns one
+same grown connected component, the current behavior still returns one
 candidate but records `blend_flag`, `num_local_peaks`, and `local_peaks`; setting
 `extract.deblend.policy=reject` drops multi-peak segments. `weighted_centroid`,
 `flux`,
@@ -356,26 +356,27 @@ always preserved separately as `StarCandidate.flags["segment_bbox"]`. Setting
 `grow_threshold_sigma` equal to `seed_threshold_sigma` reproduces seed-only
 segmentation.
 
-PR13 keeps `weighted_centroid` as the default because it is the flight-oriented
+`weighted_centroid` remains the default because it is the flight-oriented
 low-latency estimator. It now also propagates pixel noise into
 `StarCandidate.centroid_cov_pix` and stores scalar summaries such as
 `centroid_sigma_x_pix`, `centroid_sigma_y_pix`, and
 `centroid_sigma_radial_pix` in flags. `adaptive_moment_centroid` is an explicit
 YAML-selected second-moment weighted centroid variant. It uses the grown segment
 to derive an adaptive elliptical kernel, then computes a weighted centroid and
-covariance. `psf_template_fit` is intentionally not implemented in PR13 because
+covariance. `psf_template_fit` is intentionally not implemented yet because
 ET off-axis PSFs can be strongly non-Gaussian and require a configured external
 PSF bundle; selecting it currently requires `psf.template_bundle_path` and then
 raises a follow-up implementation error. The dedicated implementation is tracked
 in #89.
 
-Shape metrics are measured directly from the candidate pixels; PR12 does not use
+Shape metrics are measured directly from the candidate pixels; extraction does not use
 an external PSF model. `StarCandidate.shape` includes `sigma_major_pix`,
 `sigma_minor_pix`, `theta_rad`, `ellipticity`, `fwhm_pix`, `sharpness`,
 `roundness`, and `shape_degenerate`. Ellipticity is defined as
 `1 - sqrt(lambda_min / lambda_max)` from the second-moment eigenvalues.
 `fwhm_pix` is the major-axis second-moment proxy `2.3548 * sigma_major_pix`;
-`sharpness` is peak divided by mean grown-segment surface brightness. PR11 makes
+`sharpness` is peak divided by mean grown-segment surface brightness. The current
+artifact filtering path makes
 artifact filtering configurable: the default `base.yaml` rejects degenerate
 single-pixel sources, overly sharp candidates, and candidates overlapping
 preprocess artifact masks such as saturation guards. Accepted candidates also
@@ -518,8 +519,8 @@ base key only when the matcher is invoked as a reacquire fallback.
 | `match.local_pyramid.photometric_rank_weight` | float | `0.0` | active | Optional soft cost weight comparing observed SNR/flux rank to reference magnitude rank. Kept off by default until bandpass/flux weighting is formalized. |
 | `match.local_pyramid.seed_consistency_penalty` | float | `1.0e-6` | active | Tiny assignment penalty for expansion edges that are not part of the candidate seed, used only to make exact ties deterministic. |
 
-`seed_attitude_projected` expansion is not implemented. PR4 provides
-`seed_attitude_only` for local reacquire; projector-backed seed-attitude pixel
+`seed_attitude_projected` expansion is not implemented. The current reacquire
+path provides `seed_attitude_only`; projector-backed seed-attitude pixel
 reprojection is tracked as follow-up work.
 
 ### `match.lost_in_space`
@@ -548,7 +549,7 @@ reprojection is tracked as follow-up work.
 
 `run_sequence_tracking()` uses explicit mode names:
 `init_known_field`, `tracking`, `local_reacquire`, `lost_in_space`, and
-`safe_lost`. In PR8, `lost_in_space` invokes the all-sky
+`safe_lost`. `lost_in_space` invokes the all-sky
 `LostInSpaceMatcher` when the runtime models mapping includes
 `models["lis_index"]`. If the index is absent, the frame fails cleanly with
 reason `lost_in_space_index_missing` and the state machine applies
@@ -560,8 +561,8 @@ deferred to the configuration audit tracked in #69.
 | `tracking.search_radius_pix` | float | `10.0` | reserved | Tracking currently uses catalog prediction plus `match.validate_max_residual_pix`, not this key. |
 | `tracking.max_miss_count` | int | `3` | active | Track states remain active until their miss count exceeds this value. |
 | `tracking.tracking_match_algorithm` | string | `predicted_position` | active | Matcher policy used while in `tracking`. If absent, runtime falls back to `match.algorithm`. |
-| `tracking.local_reacquire_match_algorithm` | string | `predicted_position_with_pyramid_reacquire` | active | Matcher policy used in `local_reacquire`; this invokes predicted-position matching first, then PR4 local-pyramid reacquire on failure. |
-| `tracking.lost_in_space_match_algorithm` | string | `lost_in_space` | active | Matcher policy label used in `lost_in_space`; PR8 routes this mode to `LostInSpaceMatcher` with runtime `models["lis_index"]`. |
+| `tracking.local_reacquire_match_algorithm` | string | `predicted_position_with_pyramid_reacquire` | active | Matcher policy used in `local_reacquire`; this invokes predicted-position matching first, then local-pyramid reacquire on failure. |
+| `tracking.lost_in_space_match_algorithm` | string | `lost_in_space` | active | Matcher policy label used in `lost_in_space`; this mode routes to `LostInSpaceMatcher` with runtime `models["lis_index"]`. |
 | `tracking.reacquire_after_tracking_failures` | int | `2` | active | Number of consecutive `tracking` failures before transitioning to `local_reacquire`. |
 | `tracking.lost_in_space_after_reacquire_failures` | int | `3` | active | Number of consecutive `local_reacquire` failures before transitioning to `lost_in_space`. |
 | `tracking.safe_lost_after_lis_failures` | int | `1` | active | Number of consecutive `lost_in_space` failures before transitioning to `safe_lost`. |
@@ -611,9 +612,9 @@ magnitude when available, and the `weight_source`/`flux_weight` used for
 | `attitude.min_stars_mathematical` | int | `2` | active | Minimum matched stars required to attempt attitude solving. |
 | `attitude.min_stars_operational` | int | `4` | active | Minimum matched stars required for a `VALID` attitude solution. |
 | `attitude.weight_mode` | string | `variance_snr_hybrid` | active | Controls how `ObservedStar.weight` is populated before matching: `snr`, `centroid_variance`, or `variance_snr_hybrid`. `sigma_angle_arcsec` is recorded regardless of mode when centroid covariance is available. |
-| `attitude.estimate_covariance` | bool | `true` | active | Enables PR19 small-angle attitude covariance estimation from matched-star `sigma_angle_arcsec`. If any used matched star lacks sigma, the attitude is still solved but covariance output is marked unavailable instead of fabricating uncertainty. |
+| `attitude.estimate_covariance` | bool | `true` | active | Enables small-angle attitude covariance estimation from matched-star `sigma_angle_arcsec`. If any used matched star lacks sigma, the attitude is still solved but covariance output is marked unavailable instead of fabricating uncertainty. |
 | `attitude.covariance_rank_tol` | float | `1e-12` | active | Relative eigenvalue tolerance for declaring the attitude covariance normal matrix singular or ill-conditioned. |
-| `attitude.outlier_reject_enable` | bool | `true` | active | Enables PR20 robust matched-star rejection before final attitude quality is accepted. |
+| `attitude.outlier_reject_enable` | bool | `true` | active | Enables robust matched-star rejection before final attitude quality is accepted. |
 | `attitude.outlier_reject_mode` | string | `sigma_clip_iterative` | active | Robust rejection mode: `single_pass`, `hard_gate_iterative`, or `sigma_clip_iterative`. |
 | `attitude.outlier_max_residual_arcsec` | float | `30.0` | active | Absolute residual hard gate for outlier rejection and final validity. |
 | `attitude.outlier_sigma_clip` | float | `3.0` | active | Sigma-clipping threshold used by `sigma_clip_iterative`; measurement sigma is preferred when matched-star `sigma_angle_arcsec` exists. |
@@ -623,7 +624,7 @@ magnitude when available, and the `weight_source`/`flux_weight` used for
 | `attitude.outlier_mad_min_sigma_arcsec` | float | `1e-6` | active | Minimum robust residual sigma required before the MAD fallback can reject stars. |
 | `attitude.outlier_max_reject_per_iteration` | int | `1` | active | Maximum matched stars to reject per robust iteration; `<=0` allows all current outliers to be rejected together. |
 | `attitude.min_active_detectors_valid` | int/null | `null` | active | Optional minimum active detector count required for `VALID`; null records detector diversity without enforcing a hard detector-diversity gate. |
-| `attitude.max_iterations` | int | `5` | active | Maximum robust solve/rejection iterations for PR20 attitude validation. |
+| `attitude.max_iterations` | int | `5` | active | Maximum robust solve/rejection iterations for attitude validation. |
 | `attitude.quest_tol` | float | `1e-12` | active | Newton tolerance for QUEST characteristic-root solve. |
 | `attitude.quest_max_iter` | int | `50` | active | Maximum QUEST Newton iterations. |
 
@@ -648,7 +649,7 @@ magnitude when available, and the `weight_source`/`flux_weight` used for
 
 | Key | Type | Default | Status | Description |
 |-----|------|---------|--------|-------------|
-| `evaluation.error_budget.enabled` | bool | `true` | active | Enables the PR21 detector-to-attitude error-budget ledger. |
+| `evaluation.error_budget.enabled` | bool | `true` | active | Enables the detector-to-attitude error-budget ledger. |
 | `evaluation.error_budget.output_json` | bool | `true` | active | Writes `validation/error_budget.json` in debug bundles when an error budget is present. |
 | `evaluation.error_budget.output_csv` | bool | `true` | active | Writes `validation/error_budget_terms.csv` with one row per ledger term. |
 | `evaluation.error_budget.max_per_star_records` | int or null | `null` | active | Optional cap for matched-star detail records in the ledger. Null keeps all matched stars. |

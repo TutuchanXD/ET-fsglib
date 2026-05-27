@@ -1,109 +1,151 @@
-# fsglib 调试输出说明
+# fsglib Debug Outputs
 
-## 1. 输出目录
+本文档说明当前 `fsglib` 会写出的主要调试产物。不同入口的输出粒度不完全
+相同：compact examples 写少量 top-level JSON；exact/full-bundle examples
+会写完整目录树。
 
-单帧调试在：
+## 1. 输出目录规则
 
-- `/home/cxgao/ET/FSG/fsglib/outputs/debug`
+默认调试目录来自：
 
-同名 bundle：
+```yaml
+project:
+  output_dir: outputs/debug
+```
 
-- `/home/cxgao/ET/FSG/fsglib/outputs/debug/scope0_coadd_000000_000000`
+guide-specific output helper 的规则：
 
-## 2.  bundle 中的文件
+- 如果 `project.output_dir` 保持默认值，并且 `guide_init.dataset_root`
+  存在，则输出到 `<dataset_root>_fsg-results/frameXXXXXX/`；
+- `debug/` 保存 JSON、数组和审计数据；
+- `figures/` 保存 matching overlays；
+- 如果显式设置了 `project.output_dir`，则直接使用该目录。
 
-- `raw.npy`
-  - 原始图像数组。
-- `preprocessed.npy`
-  - 预处理后的图像数组。
-- `noise_map.npy`
-  - 预处理阶段估计的噪声图。
-- `truth_stars.json`
-  - 来自 `stars.ecsv` 的静态真值星表，已转换到像素坐标。
-- `reference_stars.json`
-  - 当前帧构造出来的参考星，以及其预测像点。
-- `candidates.json`
-  - 星点提取阶段输出的候选质心。
-- `matches.json`
-  - 最终参与姿态解算的匹配对，包含 truth / predicted / observed 三类信息。
-- `solution.json`
-  - 本帧主结果。
-- `analysis.json`
-  - 对误差来源做进一步分解后的结果。
-- `attitude/solution_summary.json`
-  - 姿态解算摘要，包含质量标记、支持星数、残差和四元数。
-- `attitude/covariance.json`
-  - PR19 姿态 covariance 与控制质量指标。
-- `attitude/robust_rejection.json`
-  - PR20 姿态鲁棒剔除逐轮审计，包含 rejected IDs、残差、阈值和原因。
-- `validation/error_budget.json`
-  - PR21 探测器噪声到姿态误差的结构化 ledger；每个 term 都带单位、来源、假设和缺失原因。
-- `validation/error_budget_terms.csv`
-  - 同一 ledger 的表格版本，便于排序、筛选和复制到分析表。
-- `overlay_truth_candidates.png`
-  - 静态 truth 与提取质心叠加图。
-- `matched_truth_bias.png`
-  - matched 星从静态 truth 指向观测质心的偏差矢量图。
-- `matched_prediction_overlay.png`
-  - 参考预测像点指向观测质心的残差矢量图。
-- `README.md`
-  - 当前 bundle 的快速说明。
+truth-noise exact 和 full parallel examples 会把每一帧写到独立输出目录，并
+额外保存 config snapshot 和 per-frame status。
 
-## 3. `solution.json` 字段
+## 2. Compact run-level 文件
 
-- `valid`
-  - 本帧姿态解是否通过当前门限。
-- `num_matched`
-  - 进入姿态解算的匹配星数。
-- `num_rejected`
-  - 姿态求解阶段剔除的星数。
-- `q_ib`
-  - 四元数 `[w, x, y, z]`，表示惯性系到本体系的旋转。
-- `covariance_rad2`
-  - PR19 小角姿态 covariance，单位 rad²；缺少 matched-star sigma 时为 null。
-- `sigma_non_roll_arcsec`
-  - 光轴指向二维 1-sigma 不确定度，单位角秒。
-- `sigma_roll_arcsec`
-  - 绕 body `+Z` 光轴滚转 1-sigma 不确定度，单位角秒。
-- `attitude_condition_number`
-  - 姿态 covariance normal matrix 的条件数。
-- `residual_rms_arcsec`
-  - 姿态解算后，matched 星方向矢量残差的 RMS，单位角秒。
-- `residual_max_arcsec`
-  - 姿态解算后最大方向残差，单位角秒。
-- `quality_flag`
-  - 当前质量标签。
-- `degraded_level`
-  - 当前解算的降级等级。
-- `active_detector_ids`
-  - 当前参与解算的探测器编号。
-- `solver_iterations`
-  - 求解器迭代次数。
-- `quality`
-  - 姿态解算的质量摘要，如输入星数、使用星数、残差门限和
-    `quality.meta.attitude_covariance` / `quality.meta.robust_rejection`。
-- `error_budget`
-  - PR21 error-budget ledger 的完整 JSON 副本；debug bundle 同时在
-    `validation/error_budget.json` 保存独立文件。
-- `timings_s`
-  - 各阶段耗时。
-- `matching.debug.mean_residual_pix`
-  - 匹配阶段中，预测像点到观测质心的平均像面残差。
-- `matching.debug.num_candidate_edges`
-  - 通过像素残差门限的观测星-参考星候选边数量。
-- `matching.debug.num_predicted_position_matches`
-  - 预测像点邻域匹配得到的星点数。
-- `matching.debug.num_local_pyramid_matches`
-  - 局部金字塔匹配得到的星点数；未运行该策略时为 0。
-- `matching.debug.unique_assignment_enabled`
-  - 是否启用了一对一参考星分配。
-- `matching.debug.num_unique_matches`
-  - 启用一对一分配时最终保留的唯一匹配数量。
+常见 compact examples 会写：
+
+- `*_result.json`: 主结果摘要。
+- `*_error_audit.json`: guide error audit。
+- `*_error_budget.json`: detector-to-attitude error-budget ledger。
+- `*_error_budget_terms.csv`: ledger 的表格化版本。
+
+这些文件通常位于 `outputs/debug/`，或由脚本显式设置的目录。
+
+## 3. Debug bundle 文件
+
+`save_debug_bundle()` 或 full-bundle examples 可能写出以下文件，但两类
+bundle 的数组命名不同。实际存在与否取决于入口、配置和是否有相应中间数据。
+
+### `save_debug_bundle()` 图像与候选星
+
+- `raw.npy`: 原始图像数组。
+- `preprocessed.npy`: 预处理后的图像数组。
+- `noise_map.npy`: 噪声图。
+- `artifact_mask_<name>.npy`: 可选 artifact mask，例如 saturation guard。
+- `truth_stars.json`: truth 星表，已转换到像素坐标。
+- `candidates.json`: 提取候选星。
+- `centroid_step_audit.json`: 可选 centroid step audit。
+
+### Full-bundle per-detector 图像数组
+
+truth-noise exact 和 full transit examples 在 `detectors/<detector_id>/`
+下写 per-detector 数组：
+
+- `raw_image.npy`: detector 原始图像。
+- `preprocessed_image.npy`: 预处理后图像。
+- `preprocessed_valid_mask.npy`: 有效像素 mask。
+- `preprocessed_background.npy`: 背景估计图，只有背景为数组时写出；
+  标量背景记录在 `preprocessed_meta.json`。
+- `preprocessed_noise_map.npy`: 噪声图，只有该值为数组时写出。
+- `preprocessed_variance_map.npy`: 方差图，只有该值为数组时写出。
+- `artifact_masks/<name>.npy`: per-detector artifact masks。
+- `preprocessed_meta.json`: preprocess metadata 和数组路径索引。
+
+### 参考星与匹配
+
+- `reference_stars.json`: 当前帧参考星和 predicted detector position。
+- `observed_stars.json`: 当前帧观测星。
+- `matches.json`: 最终参与姿态解算的匹配对。
+- `matching/matching_result.json`: full-bundle matching 摘要。
+- `matching/matched_stars.json`: full-bundle matched stars。
+- `matching/observed_stars.json`: full-bundle observed stars。
+- `matching/reference_stars.json`: full-bundle reference stars。
+- `matching/detector_stats.json`: detector-level 统计。
+
+### 姿态与验证
+
+- `solution.json`: 本帧姿态解和质量摘要。
+- `attitude/solution_summary.json`: 姿态解摘要。
+- `attitude/covariance.json`: 小角姿态 covariance 和控制质量指标。
+- `attitude/robust_rejection.json`: 姿态鲁棒剔除逐轮审计。
+- `analysis.json`: 单帧误差分析。
+- `audit/guide_error_audit.json`: full-bundle guide error audit。
+- `validation/error_budget.json`: error-budget ledger。
+- `validation/error_budget_terms.csv`: ledger CSV。
+
+### 几何、配置和图
+
+- `geometry/geometry_adapter.json`: exact focal-plane adapter metadata。
+- `geometry/sim_to_detector_map.json`: sim pixel 到 detector pixel 的映射。
+- `config/base.yaml`: base config snapshot。
+- `config/<overlay>.yaml`: workflow overlay snapshot。
+- `config/merged_config.yaml`: 运行时合并配置。
+- `config/run_meta.json`: 运行元数据。
+- `overlay_truth_candidates.png`: truth 与候选星叠加图。
+- `matched_truth_bias.png`: truth 到观测质心的偏差矢量图。
+- `matched_prediction_overlay.png`: predicted position 到观测质心的残差图。
+- `figures/matching_overlay_summary.json`: matching overlay 输出摘要。
+
+## 4. `solution.json` 常用字段
+
+- `valid`: 姿态解是否通过当前质量门限。
+- `num_matched`: 进入姿态求解的匹配星数量。
+- `num_rejected`: 姿态鲁棒剔除数量。
+- `q_ib`: scalar-first quaternion `[w, x, y, z]`。
+- `covariance_rad2`: 小角姿态 covariance，单位 rad^2；缺少 matched-star
+  sigma 时为 null。
+- `sigma_non_roll_arcsec`: 光轴指向二维 1-sigma 不确定度。
+- `sigma_roll_arcsec`: 绕 body `+Z` 的 roll 1-sigma 不确定度。
+- `attitude_condition_number`: covariance normal matrix 条件数。
+- `residual_rms_arcsec`: 姿态解算后 LOS residual RMS。
+- `residual_max_arcsec`: 姿态解算后最大 LOS residual。
+- `quality_flag`: `VALID`、`DEGRADED`、`LOST` 或 `INVALID` 等质量标签。
+- `degraded_level`: 当前降级等级。
+- `active_detector_ids`: 当前参与解算的 detector ids。
+- `solver_iterations`: 求解和剔除迭代次数。
+- `quality.meta.attitude_covariance`: covariance 可用性和 provenance。
+- `quality.meta.robust_rejection`: outlier rejection 审计。
+- `error_budget`: error-budget ledger 的 JSON 副本。
+- `timings_s`: 运行耗时信息。
+
+## 5. `matching.debug` 常用字段
+
+- `algorithm`: 请求的 matching algorithm。
+- `selected_strategy`: 实际采用的策略。
+- `success`: matching 是否达到支持和残差要求。
+- `num_candidate_edges`: predicted-position 候选边数量。
+- `num_predicted_position_matches`: predicted-position 匹配数量。
+- `num_local_pyramid_matches`: local-pyramid 匹配数量。
+- `mean_residual_pix`: predicted detector position 到观测质心的平均残差。
+- `rms_residual_pix`: detector pixel residual RMS。
+- `unique_assignment_enabled`: 是否执行一对一 assignment。
+- `num_unique_matches`: 一对一 assignment 后保留的匹配数量。
+- `pyramid_debug`: local-pyramid seed、expansion 和 rejection 细节。
+- `nearest_vs_pyramid`: predicted-position 与 local-pyramid 对比。
+
+## 6. 评估字段
+
+`FrameEvaluation` 或 result payload 中常见字段：
+
 - `evaluation.centroid_mae_pix`
-  - 提取质心到静态 `stars.ecsv` 的平均最近邻距离。
 - `evaluation.non_roll_error_arcsec`
-  - 非绕光轴姿态误差。
 - `evaluation.roll_error_arcsec`
-  - 绕光轴姿态误差。
 - `evaluation.total_attitude_error_arcsec`
-  - 总姿态误差角。
+- `evaluation.error_budget`
+
+这些字段依赖 truth、matched-star covariance 和配置开关；缺少输入时会保持
+null 或不生成。

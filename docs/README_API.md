@@ -1,104 +1,108 @@
-# `fsglib` API Document
+# fsglib API Notes
 
-## 1. 范围
+本文档记录当前 `fsglib` 维护中的主要 API、数据结构和运行入口。详细
+YAML key 说明见 `docs/yaml_configuration_reference.md`，调试产物说明见
+`docs/README_debug.md`。
 
-用于ET导星算法验证。
+## 1. 当前维护入口
 
-__Author：chenxu__
+主要维护入口：
 
-__Version：1.0.0__
+- `fsglib.pipeline.run_guide_first_frame_init(cfg)`
+- `fsglib.pipeline.run_guide_first_frame_truth_noise(cfg)`
+- `fsglib.pipeline.run_init.run_single_frame_init(npz_path, cfg, models, dataset_ctx=None)`
+- `fsglib.pipeline.run_tracking.run_sequence_tracking(npz_paths, cfg, models, dataset_ctx=None)`
 
-## 2. 入口
+其中前两个是 ET 四 guide detector 联合验证的主路径。后两个是通用单帧
+和序列接口，需要外部注入 `models["projector"]`、`models["catalog"]`，
+以及在 lost-in-space 路径中可选的 `models["lis_index"]`。
 
-1. `fsglib.pipeline.run_guide_first_frame_init`
-2. `fsglib.pipeline.run_guide_first_frame_truth_noise`
-3. ~~`fsglib.pipeline.run_init.run_single_frame_init`~~
-4. ~~`fsglib.pipeline.run_tracking.run_sequence_tracking`~~
+## 2. 链路分层
 
-- `run_guide_first_frame_init` 和 `run_guide_first_frame_truth_noise` 导星四探测器联合验证链路的入口；
-- ~~`run_single_frame_init` 和 `run_sequence_tracking` 通用的单帧序列处理接口，依赖外部 `models` 注入投影器和星表访问对象；~~
-
-## 3. 当前链路分层
-
-### 3.1 数据输入层
-
-位置：
-
-- [fsglib/common/io.py](/home/cxgao/ET/FSG/fsglib/fsglib/common/io.py:1)
-
-功能：
-
-- 读取单帧 `npz`；
-- 读取批次目录 `batch_root`；
-- `DatasetContext`；
-- 在可用时提取帧内 truth 信息；
-
-### 3.2 图像到观测向量
+### 数据输入层
 
 位置：
 
-- [fsglib/preprocess/pipeline.py](/home/cxgao/ET/FSG/fsglib/fsglib/preprocess/pipeline.py:1)
-- [fsglib/extract/pipeline.py](/home/cxgao/ET/FSG/fsglib/fsglib/extract/pipeline.py:1)
-- [fsglib/pipeline/convert.py](/home/cxgao/ET/FSG/fsglib/fsglib/pipeline/convert.py:1)
-- [fsglib/pipeline/run_guide_init.py](/home/cxgao/ET/FSG/fsglib/fsglib/pipeline/run_guide_init.py:1)
-- [fsglib/pipeline/run_guide_truth_noise.py](/home/cxgao/ET/FSG/fsglib/fsglib/pipeline/run_guide_truth_noise.py:1)
+- `fsglib/common/io.py`
 
-功能：
+职责：
 
-- 单帧，`RawFrame -> PreprocessedFrame -> StarCandidate -> ObservedStar`；
-- 联合链路，`ObservedStar` 通过 exact `et_focalplane` adapter 构造。
+- 读取单帧 NPZ；
+- 回溯或读取 batch 目录；
+- 构造 `DatasetContext`；
+- 在可用时解析帧内 truth payload 和 `stars.ecsv` 静态 truth。
 
-### 3.3 参考星、匹配与姿态解算层
+### 图像到观测向量
 
 位置：
 
-- [fsglib/ephemeris/pipeline.py](/home/cxgao/ET/FSG/fsglib/fsglib/ephemeris/pipeline.py:1)
-- [fsglib/match/pipeline.py](/home/cxgao/ET/FSG/fsglib/fsglib/match/pipeline.py:1)
-- [fsglib/attitude/solver.py](/home/cxgao/ET/FSG/fsglib/fsglib/attitude/solver.py:1)
+- `fsglib/preprocess/calibration.py`
+- `fsglib/preprocess/pipeline.py`
+- `fsglib/extract/pipeline.py`
+- `fsglib/pipeline/convert.py`
+- `fsglib/ephemeris/guide_geometry.py`
+- `fsglib/pipeline/run_guide_init.py`
+- `fsglib/pipeline/run_guide_truth_noise.py`
 
-功能：
+职责：
 
-- 参考星构造；
-- 预测像点或三角匹配；
-- QUEST 解算、残差评估和异常点剔除。
+- `RawFrame -> PreprocessedFrame -> StarCandidate -> ObservedStar`；
+- 对真实图像执行 detector calibration、背景/方差估计和候选星提取；
+- 对 truth-noise 工作流直接从 truth detector 坐标构造合成观测；
+- 使用 exact `et_focalplane` adapter 生成 body-frame LOS。
 
-### 3.4 评估与调试输出层
-
-位置：
-
-- [fsglib/pipeline/evaluate.py](/home/cxgao/ET/FSG/fsglib/fsglib/pipeline/evaluate.py:1)
-- [fsglib/pipeline/guide_error_audit.py](/home/cxgao/ET/FSG/fsglib/fsglib/pipeline/guide_error_audit.py:1)
-- [fsglib/common/debug.py](/home/cxgao/ET/FSG/fsglib/fsglib/common/debug.py:772)
-
-功能：
-
-- 单帧评估；
-- 序列汇总；
-- 导星首帧误差拆分；
-- 调试产物落盘。
-
-## 4. 入口
-
-### 4.1 `run_guide_first_frame_init(cfg) -> dict`
+### 参考星、匹配与姿态层
 
 位置：
 
-- [fsglib/pipeline/run_guide_init.py](/home/cxgao/ET/FSG/fsglib/fsglib/pipeline/run_guide_init.py:471)
+- `fsglib/ephemeris/pipeline.py`
+- `fsglib/match/pipeline.py`
+- `fsglib/match/pyramid.py`
+- `fsglib/match/lost_in_space.py`
+- `fsglib/attitude/solver.py`
 
-场景：
+职责：
 
-- 真实提取质心的导星首帧联合初始化；
-- 4个 guide detector 联合；
-- 参考星来自 `et_focalplane + GaiaCatalog`；
-- 匹配和姿态解算 QUEST 实现。
+- 构造 `ReferenceStar`；
+- 执行 predicted-position、local-pyramid、reacquire 或 lost-in-space 匹配；
+- 用 QUEST 求解惯性系到本体系姿态；
+- 执行姿态 covariance 估计和鲁棒 outlier rejection。
 
-输入：
+### 评估与输出层
 
-- `cfg["guide_init"]` 完整；
+位置：
+
+- `fsglib/pipeline/evaluate.py`
+- `fsglib/pipeline/guide_error_audit.py`
+- `fsglib/pipeline/error_budget.py`
+- `fsglib/pipeline/guide_outputs.py`
+- `fsglib/common/debug.py`
+
+职责：
+
+- 单帧与序列指标；
+- guide error audit；
+- detector-to-attitude error-budget ledger；
+- debug bundle 和 matching overlay 输出。
+
+## 3. 主要入口
+
+### `run_guide_first_frame_init(cfg) -> dict`
+
+适用场景：
+
+- 真实图像质心提取；
+- transit 或 microlensing 四 guide detector 联合首帧初始化；
+- reference stars 来自 `et_focalplane + GaiaCatalog`；
+- matching 和 QUEST 均由 `fsglib` 执行。
+
+输入要求：
+
+- `cfg["guide_init"]` 提供 `dataset_root`、`detector_batches` 和筛选参数；
 - `cfg["et_coord"]` 提供 `src_dir`、`data_dir`、`gaia_root_dir`；
-- `dataset_root` 下每个 batch 目录包含 `frames/*.npz`、`run_meta.json`，以及真值星表 `stars.ecsv`。
+- 每个 batch 目录通常包含 `frames/*.npz`、`run_meta.json`、`stars.ecsv`。
 
-返回字典的Key：
+返回字典常用 key：
 
 - `solution`
 - `matching`
@@ -108,461 +112,248 @@ __Version：1.0.0__
 - `sim_to_detector_map`
 - `geometry_adapter`
 - `error_audit`
+- `error_budget`
 - `meta`
 
 说明：
 
-- 先建立 sim 坐标到 `et_focalplane` detector 坐标的桥接，再通过 exact ET focal-plane adapter 做像点转 LOS；
-- `geometry_adapter` 是唯一几何模型输出字段；`body_model` 与旧兼容别名已移除。
+- guide 链路只使用 exact ET focal-plane adapter；
+- detector family 由 YAML 中的 `et_coord.config_factory` 选择；
+- `geometry_adapter` 是当前几何模型输出字段。
 
-### 4.2 `run_guide_first_frame_truth_noise(cfg) -> dict`
-
-位置：
-
-- [fsglib/pipeline/run_guide_truth_noise.py](/home/cxgao/ET/FSG/fsglib/fsglib/pipeline/run_guide_truth_noise.py:342)
+### `run_guide_first_frame_truth_noise(cfg) -> dict`
 
 适用场景：
 
-- 不提取质心，直接从 truth detector 质心注入噪声；
-- 用于评估质心误差、几何误差和姿态解算误差；
-- `examples/run_guide_first_frame_truth_noise_exact.py` 。
+- 不从图像提取质心；
+- 从 truth detector 像点注入高斯 centroid noise；
+- 隔离几何、匹配和姿态求解误差；
+- 支持 compact 和 exact/full-bundle 两类 example。
 
-### 4.3 `run_single_frame_init(npz_path, cfg, models, dataset_ctx=None) -> FrameResult`
+配置入口：
 
-位置：
+- `cfg["guide_truth_noise"]`
+- `cfg["et_coord"]`
+- `cfg["match"]`
+- `cfg["attitude"]`
 
-- [fsglib/pipeline/run_init.py](/home/cxgao/ET/FSG/fsglib/fsglib/pipeline/run_init.py:112)
+返回字典在 guide init 基础上额外包含：
+
+- `synthetic_centroid_model`
+- `debug_context`，当调用方请求 `include_debug_context=True` 时存在。
+
+### `run_single_frame_init(...) -> FrameResult`
 
 适用场景：
 
-- 单探测器单帧初始化；
+- 通用单帧初始化；
+- 测试或非 guide-specific 投影模型。
 
-`models` ：
+`models` 要求：
 
-- `projector`
-- `catalog`
+- `models["projector"]`
+- `models["catalog"]`
+- 可选 `models["calib"]`
 
-可选：
-
-- `calib`
-
-返回值：
+返回：
 
 - `FrameResult`
 
-说明：
-
-- 默认使用 `candidates_to_observed`，依赖外部 `projector.pixel_to_los_body`；
-
-### 4.4 `run_sequence_tracking(npz_paths, cfg, models, dataset_ctx=None) -> SequenceResult`
-
-位置：
-
-- [fsglib/pipeline/run_tracking.py](/home/cxgao/ET/FSG/fsglib/fsglib/pipeline/run_tracking.py:237)
+### `run_sequence_tracking(...) -> SequenceResult`
 
 适用场景：
 
 - 通用序列跟踪；
-- 首帧走 `init_known_field`，之后按显式状态机在 `tracking`、`local_reacquire`、`lost_in_space`、`safe_lost` 间转移；
-- 使用 `models` 提供投影和星表访问。
+- 状态机在 `init_known_field`、`tracking`、`local_reacquire`、
+  `lost_in_space`、`safe_lost` 之间转移；
+- `lost_in_space` 模式使用 `LostInSpaceMatcher`，需要运行时提供
+  `models["lis_index"]`。如果缺少 index，会返回 invalid frame，并在 debug
+  中记录 `lost_in_space_index_missing`。
 
-返回值：
+返回：
 
-- `SequenceResult`
+- `SequenceResult.frames`
+- `SequenceResult.mode_history`
+- `SequenceResult.state_history`
+- `SequenceResult.metrics`
 
-产出：
-
-- `mode_history`
-- `state_history`
-- `metrics`
-
-PR5 中 `lost_in_space` 是可审计占位状态，会返回 invalid frame 和
-`lost_in_space_not_implemented`，不会静默回退到 init；真实全天区匹配由后续 PR 接入。
-
-## 5. 数据结构
-
- [fsglib/common/types.py](/home/cxgao/ET/FSG/fsglib/fsglib/common/types.py:1)。
-
-### 5.1 图像与候选星
-
-`RawFrame`
-
-- 单帧原始输入；
-
-`PreprocessedFrame`
-
-- 预处理后的图像、背景、噪声图、方差图和有效掩膜；
-- `preprocess_meta` 记录 detector calibration chain 的资产路径、应用状态和有效像素审计。
-
-`StarCandidate`
-
-- 星点提取的直接输出；
-- `shape` 里写入由候选像素直接测得的二阶矩形态指标；
-- `flags` 里写入 hysteresis 阈值、质心窗口、peak 像素、shape summary、blend flag 和 centroid covariance summary；
-
-### 5.2 观测星与匹配星
-
-`ObservedStar`
-
-- 匹配和姿态解算的观测量；
-- 字段是 `los_body`；
-- `x/y` 保留 detector 像点，用于后续审计。
-
-`MatchedStar`
-
-- 观测星与参考星的配对；
-- `los_body` 和 `los_inertial` 是姿态解算的输入；
-- `flags["observed_xy"]`、`flags["predicted_xy"]`、`flags["residual_pix"]` （用于评估依赖——chenxu）。
-
-### 5.3 上下文
-
-`DatasetContext`
-
-- 单帧数据上下文；
-- 提供 `frame_paths`、静态 truth、field center、pixel scale、field offset 等；
-
-`MatchingContext`
-
-- 匹配器输入上下文；
-
-`FrameResult`
-
-- 单帧结果；
-- 调试、评估。
-
-`SequenceResult`
-
-- 序列结果；
-- `metrics` 的 `summarize_sequence_result` 。
-
-### 5.4 星表相关
+## 4. 数据结构
 
 定义位置：
 
-- [fsglib/ephemeris/types.py](/home/cxgao/ET/FSG/fsglib/fsglib/ephemeris/types.py:1)
+- `fsglib/common/types.py`
+- `fsglib/ephemeris/types.py`
 
-对象：
+核心结构：
 
-- `CatalogStar`
-- `ReferenceStar`
-- `EphemerisContext`
+- `RawFrame`: 原始图像、时间、单位和 truth metadata。
+- `PreprocessedFrame`: 预处理图像、背景、噪声图、方差图、有效掩膜和
+  artifact masks。
+- `StarCandidate`: 提取候选星，包含 centroid、flux、SNR、bbox、shape、
+  flags 和 `centroid_cov_pix`。
+- `ObservedStar`: 匹配和姿态输入，包含 detector 像点、`los_body`、
+  centroid covariance、LOS covariance 和 `sigma_angle_arcsec`。
+- `ReferenceStar`: catalog id、`los_inertial`、各 detector 的
+  `predicted_xy` 和 visibility。
+- `MatchedStar`: observation-reference 配对，姿态求解使用
+  `los_body` 和 `los_inertial`。
+- `MatchingResult`: matched stars、success 标记和 debug metadata。
+- `AttitudeSolution`: `q_ib`、`c_ib`、residuals、covariance、quality 和
+  robust rejection metadata。
+- `FrameResult`: 单帧通用链路结果。
+- `SequenceResult`: 序列链路结果。
 
-`ReferenceStar` 的字段：
-
-- `catalog_id`
-- `los_inertial`
-- `predicted_xy`
-- `predicted_valid`
-- `detector_ids_visible`
-
-## 6. 模块接口
-
-### 6.1 输入/装配
-
-`load_npz_frame(npz_path, detector_id=0) -> RawFrame`
-
-- [fsglib/common/io.py](/home/cxgao/ET/FSG/fsglib/fsglib/common/io.py:377)
-- 读取单帧；
-- 从 `npz` 内取 truth payload；
-- `images` 需为 `(1, 1, H, W)` 或 `(H, W)`。
-
-`load_dataset_batch(batch_root, cfg=None) -> DatasetContext`
-
-- [fsglib/common/io.py](/home/cxgao/ET/FSG/fsglib/fsglib/common/io.py:252)
-- 读取 `frames/`、`run_meta.json`、`stars.ecsv`；
-- 估算 field offset；
-
-`load_dataset_batch_for_frame(npz_path, cfg=None) -> DatasetContext`
-
-- [fsglib/common/io.py](/home/cxgao/ET/FSG/fsglib/fsglib/common/io.py:372)
-- 根据单帧路径回溯。
-
-### 6.2 预处理
+## 5. 预处理
 
 `preprocess_frame(raw, calib, cfg) -> PreprocessedFrame`
 
-- [fsglib/preprocess/pipeline.py](/home/cxgao/ET/FSG/fsglib/fsglib/preprocess/pipeline.py:4)
+当前行为：
 
-实现：
+- finite mask；
+- ADC clip；
+- saturation guard；
+- bias、dark、FPN、flat、bad-pixel calibration chain；
+- `median`、`sigma_clip_global`、`mesh_median` 背景估计；
+- `empirical_robust` 或 `poisson_read_noise` 方差模型；
+- unit-aware ADU/electron conversion；
+- artifact masks 写入 `PreprocessedFrame.artifact_masks`；
+- calibration provenance 写入 `preprocess_meta`。
 
-- 有限值掩膜、12bit ADC clip、saturation guard、bias/dark/FPN/flat/bad-pixel 校准链、robust 背景估计和噪声方差估计；
-- `calib` 由 `build_models(cfg)` 根据 `preprocess.*_path` YAML 配置加载；
-- 默认 guide-detector 配置是 `detector.pixel_size_um=6.5`、`detector.adc_bit_depth=12`、`detector.saturation_value=4095.0`；Photsim7 负责权威的探测器 ADC 饱和仿真，`fsglib` 的 `preprocess.enable_adc_clip=true` 只作为输入防护，在 raw 仿真图或观测图中超过 ADC 上限的像素进入导星链路前进行截断和记录；
-- saturated pixels 进入 `PreprocessedFrame.artifact_masks`，默认 `preprocess.enable_saturation_guard=true` 会把这些像素从 `valid_mask` 中移除；
-- `preprocess.background_method` 支持 `median`、`sigma_clip_global` 和 `mesh_median`；`mesh_median` 会输出二维背景图；
-- `preprocess.variance_model` 支持默认 `empirical_robust` 和显式 `poisson_read_noise`，后者使用 gain、read noise、quantization noise 与 cadence-scaled dark current 推导物理方差；
-- `PreprocessedFrame.noise_map` 始终等于 `sqrt(variance_map)`，并保持与 `PreprocessedFrame.image` 相同的图像单位；
-- `PreprocessedFrame.preprocess_meta` 记录校准项是否启用、是否应用、资产路径、形状、无效像素计数、ADC clip、artifact counts、背景 RMS、方差模型和单位转换；
-- 宇宙线注入属于仿真端职责；`fsglib` 不在运行时生成或注入宇宙线事件，只消费输入图像和 `PreprocessedFrame.artifact_masks` 并执行饱和/伪源防护。真实观测数据通常不会提供宇宙线 mask，因此 PR11 主要依靠 ADC 饱和防护、退化源拒绝、sharpness 限制和后续拟合/匹配残差控制污染；未饱和且形态仍像星的宇宙线命中不保证被 PR11 自动识别。外部宇宙线数据资产由 Photsim7-data 管理，位于 `/home/cxgao/ET/Photsim7-data/cosmic_ray/`，供仿真端接入。
+`calib` 通常由 `fsglib.models.mock.build_models(cfg)` 根据
+`preprocess.*_path` 加载。默认 guide 配置指向 2049x2049 fake/no-op
+calibration assets，用于保持链路可运行；真实 calibration assets 应通过 YAML
+覆盖。
 
-### 6.3 星点提取
+## 6. 星点提取
 
 `extract_stars(frame, cfg) -> list[StarCandidate]`
 
-- [fsglib/extract/pipeline.py](/home/cxgao/ET/FSG/fsglib/fsglib/extract/pipeline.py:90)
-
-质心方法：
+支持的 centroid method：
 
 - `weighted_centroid`
 - `adaptive_moment_centroid`
 - `fixed_window_first_moment`
 - `full_window_first_moment`
-- `psf_template_fit`（接口已声明，真实模板拟合留给 #89）
 
-配置入口：
+保留但未实现的接口：
 
-- `extract.seed_threshold_sigma`
-- `extract.grow_threshold_sigma`
-- `extract.min_area / max_area`
-- `extract.max_ellipticity`
-- `extract.reject_degenerate_sources`
-- `extract.min_fwhm_pix / extract.max_sharpness`
-- `extract.reject_artifact_mask_overlap`
-- `extract.centroid_method`
-- `extract.centroid_window.size`
-- `extract.reject_edge_margin`
-- `extract.centroid_covariance.*`
-- `extract.deblend.*`
+- `psf_template_fit`，需要 `psf.template_bundle_path`，当前会显式报错。
 
-行为：
+当前行为：
 
-- segmentation 在 SNR 图上使用 seed/grow hysteresis，两个阈值都使用严格 `>` 比较；
-- grow region 使用 8-connected 连通性，且必须连接到至少一个 seed pixel；
-- 多个 seed 落入同一个 grown component 时返回一个 candidate，并通过 PR13 的 blend flag 标记多峰风险；
-- `weighted_centroid` 模式下的 `flux`、`area`、candidate `snr` 和 `StarCandidate.bbox` 基于 grown segment；
-- fixed-window centroid 模式下 `area` 和 candidate `snr` 仍基于 grown segment，但 `flux` 和 `StarCandidate.bbox` 来自 centroid window；grown segment bbox 保存在 `flags["segment_bbox"]`；
-- `grow_threshold_sigma = seed_threshold_sigma` 可复现 seed-only segmentation；
-- shape 由算法从 candidate pixels 自行计算，不依赖外部 PSF；真实 PSF-template centroid 留给 #89；
-- `ellipticity = 1 - sqrt(lambda_min / lambda_max)`，超过 `extract.max_ellipticity` 的候选会被拒绝；
-- `fwhm_pix` 是 major-axis 二阶矩代理量，`sharpness` 是 peak / grown-segment 平均面亮度；
-- 默认 `base.yaml` 会拒绝单像素/退化二阶矩候选、过尖锐候选，以及与 saturation/artifact mask 相交的候选；关闭 `extract.reject_degenerate_sources` 后仍可保留退化候选并标记 `shape_degenerate=true`；
-- PR13 保持 `weighted_centroid` 作为默认星上友好的低时延质心算法，同时为每个候选记录 `centroid_cov_pix` 和 `centroid_sigma_*`；
-- `adaptive_moment_centroid` 是显式启用的二阶矩加权质心变体；
-- `psf_template_fit` 需要 `psf.template_bundle_path`，但 PR13 只保留接口和文档，真正基于 Photsim7 PSF bundle 的模板拟合留给 #89；
-- grown segment 内的多个局部峰会记录 `blend_flag` / `num_local_peaks`；`extract.deblend.policy=reject` 可保守丢弃混叠候选。
+- SNR 图上 seed/grow hysteresis segmentation；
+- 8-connected grown component；
+- shape metrics：ellipticity、FWHM proxy、sharpness；
+- edge、area、artifact overlap、degenerate source 过滤；
+- multi-peak blend detection，可 `flag_only` 或 `reject`；
+- `centroid_cov_pix` 和 `centroid_sigma_*` flags；
+- `candidates_to_observed()` 可把 centroid covariance 传播到 LOS/angular sigma。
 
-### 6.4 候选星转观测向量
-
-`candidates_to_observed(candidates, projector, cfg) -> list[ObservedStar]`
-
-- [fsglib/pipeline/convert.py](/home/cxgao/ET/FSG/fsglib/fsglib/pipeline/convert.py:4)
-
-接口用于通用投影链路，要求 `projector` ：
-
-- `pixel_to_los_body(detector_id, x, y)`
-
-PR13 会通过有限差分 projector Jacobian 将 `StarCandidate.centroid_cov_pix`
-传播到 `ObservedStar.los_cov_body` 和 `ObservedStar.sigma_angle_arcsec`。
-`attitude.weight_mode` 可以选择 `snr`、`centroid_variance` 或
-`variance_snr_hybrid`，但只要存在 covariance，结果中都会记录
-`sigma_angle_arcsec`。
-
-**当前导星直接调用 `et_focalplane` 做像点到 LOS 的转换。**
-
-### 6.5 参考星构造
-
-`build_reference_stars(ctx, catalog_provider, projector, cfg) -> list[ReferenceStar]`
-
-- [fsglib/ephemeris/pipeline.py](/home/cxgao/ET/FSG/fsglib/fsglib/ephemeris/pipeline.py:51)
-
-行为：
-
-- `init` 模式下按 boresight 查询区域星表；
-- `tracking` 模式下查询跟踪目标；
-- 根据 `ephemeris.target_epoch` 对 generic Gaia 星表做 proper-motion epoch propagation；
-- 再调用 `projector.project_to_detectors()` 生成 `predicted_xy`；
-- `ReferenceStar.meta` 记录原始/传播后坐标、epoch 和 weight provenance；
-- `weight_hint` 由 Kepler/ET bandpass magnitude 的 flux proxy 派生，缺失时 fallback 到 Gaia G。
-
- `projector` 的要求：
-
-- `project_to_detectors(los_inertial, attitude_q)`
-
-### 6.6 匹配
+## 7. 匹配
 
 `match_stars(ctx, reference_stars, cfg) -> MatchingResult`
 
-- [fsglib/match/pipeline.py](/home/cxgao/ET/FSG/fsglib/fsglib/match/pipeline.py:120)
+`match.algorithm` 当前活跃值：
 
-策略：
+- `predicted_position`
+- `local_pyramid`
+- `predicted_position_and_local_pyramid`
+- `predicted_position_with_pyramid_reacquire`
 
-- 基于预测像点的最近邻；
-- `match.algorithm` 为 `local_pyramid` 时，使用当前 `ReferenceStar` 列表构建局部金字塔匹配；
-- `match.algorithm` 为 `predicted_position_and_local_pyramid` 时，两种匹配都运行，选择匹配星点数更多的一组；
-- `match.algorithm` 为 `predicted_position_with_pyramid_reacquire` 时，预测像点匹配失败后再尝试局部金字塔；
-- 旧 `triangle` / `local_triangle` 依赖已废弃的本地 GSC NPZ 索引，只保留为 legacy 路径。
+deprecated compatibility values：
 
-`associate_nearest(...) -> MatchingResult`
+- `triangle`
+- `local_triangle`
 
-- [fsglib/match/pipeline.py](/home/cxgao/ET/FSG/fsglib/fsglib/match/pipeline.py:5)
-- 当前主链路。
+predicted-position matcher：
 
-`validate_match_hypothesis(...) -> tuple[bool, dict]`
+- 按 detector predicted pixel residual 构造候选边；
+- 默认启用一对一 assignment；
+- debug 中记录 candidate edge 数、mean/RMS residual 等。
 
-- [fsglib/match/pipeline.py](/home/cxgao/ET/FSG/fsglib/fsglib/match/pipeline.py:166)
-- 做姿态跳变和残差门限检查。
+local-pyramid matcher：
 
-### 6.7 姿态解算
+- 使用当前 `ReferenceStar` 列表，不依赖旧 GSC index；
+- 支持 single-detector 和 mixed-detector seeds；
+- 支持 pair/query cache；
+- reacquire 可使用 seed-attitude-only geometry expansion；
+- debug 中记录 seed、expansion、ambiguity 和 per-detector residual audit。
+
+lost-in-space matcher：
+
+- 位于 `fsglib.match.lost_in_space`；
+- 使用预构建 LIS index；
+- 跟踪状态机在 `lost_in_space` 模式中调用；
+- index 可通过 `python -m fsglib.tools.build_lis_index ...` 构建。
+
+## 8. 姿态解算
 
 `solve_attitude(solve_input, cfg) -> AttitudeSolution`
 
-- [fsglib/attitude/solver.py](/home/cxgao/ET/FSG/fsglib/fsglib/attitude/solver.py:197)
-
-流程：
-
-- `solve_quest`
-- PR20 iterative robust rejection：按 hard gate、带
-  `outlier_sigma_floor_arcsec` 的 `sigma_angle_arcsec` 归一化残差和 MAD
-  fallback 逐轮剔除坏匹配，并重新求解
-- 基于 matched-star `sigma_angle_arcsec` 估计小角姿态 covariance
-- 质量标记与降级等级判定
-
 约定：
 
-- 四元数采用标量 `[w, x, y, z]`；
-- `q_ib` / `c_ib` 表示惯性系到本体系；
-- `quality_flag` 当前主要取 `VALID`、`DEGRADED`、`LOST`、`INVALID`；
-- `degraded_level` 由有效 detector 数量给出。
-- PR19 输出 `covariance_rad2`、`sigma_non_roll_arcsec`、
-  `sigma_roll_arcsec` 和 `attitude_condition_number`。若 used matched stars
-  中缺少 `sigma_angle_arcsec`，姿态仍会正常解算，但 covariance 字段保持
-  `None`，原因写入 `quality["meta"]["attitude_covariance"]`。
-- PR20 输出 `quality["meta"]["robust_rejection"]`，记录每轮参与解算的
-  matched stars、每个 rejection 的 `detector_id/source_id/catalog_id`、
-  residual、阈值和原因。若配置了 `min_active_detectors_valid`，探测器数量不足
-  会令结果降级为 `valid=False`。
+- `C_ib` 把 inertial vector 映射到 body vector；
+- `q_ib` 是同一旋转的 scalar-first quaternion `[w, x, y, z]`；
+- SciPy quaternion 顺序转换必须使用 solver helper。
 
-### 6.8 评估调试
+当前行为：
+
+- QUEST 求解；
+- 支持 `snr`、`centroid_variance`、`variance_snr_hybrid` 权重；
+- 从 matched-star `sigma_angle_arcsec` 估计小角姿态 covariance；
+- 输出 `covariance_rad2`、`sigma_non_roll_arcsec`、
+  `sigma_roll_arcsec`、`attitude_condition_number`；
+- iterative robust rejection 记录在
+  `quality["meta"]["robust_rejection"]`；
+- 若缺失 sigma，仍可求解姿态，但 covariance metadata 会标记 unavailable。
+
+## 9. 评估与审计
 
 `evaluate_frame_result(...) -> FrameEvaluation | None`
 
-- [fsglib/pipeline/evaluate.py](/home/cxgao/ET/FSG/fsglib/fsglib/pipeline/evaluate.py:147)
-- 有 truth 时返回单帧评估，否则返回 `None`。
+- 有 truth 时输出 centroid、roll/non-roll/total attitude metrics；
+- 缺少 truth 时返回 `None`；
+- 可挂载 frame-level error-budget summary。
 
 `summarize_sequence_result(sequence_result) -> dict`
 
-- [fsglib/pipeline/evaluate.py](/home/cxgao/ET/FSG/fsglib/fsglib/pipeline/evaluate.py:242)
-- 汇总序列指标，并在帧级 ledger 存在时输出 `error_budget` 聚合百分位。
+- 汇总 valid frame、mode history、runtime 和 error budget 聚合指标。
+
+`compute_guide_error_audit(...) -> dict`
+
+- 比较 truth、extracted centroid、predicted detector position、LOS geometry、
+  matching 和 final attitude；
+- 用于定位误差来源。
 
 `build_error_budget_ledger(...) -> ErrorBudgetLedger`
 
-- [fsglib/pipeline/error_budget.py](/home/cxgao/ET/FSG/fsglib/fsglib/pipeline/error_budget.py:1)
-- 生成 PR21 detector-to-attitude error-budget ledger；
-- 每个 term 包含 `name/stage/value/unit/source/assumption/available/reason`；
-- 缺少物理输入时记录 unavailable term，不用 0 伪装未知误差；
-- fake PR9 calibration assets 会在 assumption/provenance 中显式标记。
+- 输出 detector/preprocess/centroid/matching/attitude 的结构化 ledger；
+- 每个 term 包含单位、来源、假设、available 状态和 unavailable reason；
+- 缺少物理输入时记录 unavailable，不用 0 伪装未知误差；
+- fake/no-op calibration assets 会在 provenance/assumption 中显式标记。
 
-`save_debug_bundle(result, cfg) -> Path | None`
-
-- [fsglib/common/debug.py](/home/cxgao/ET/FSG/fsglib/fsglib/common/debug.py:772)
-- 把单帧结果落成一个可读的 debug 目录；
-- 适合做链路回归，不适合作为稳定 API 对外承诺文件格式。
-
-## 7. 导星联合链路
-
-### 7.1 `run_guide_first_frame_init`
-
-1. 通过 `_load_et_coord()` 动态加载 `et_coord` 对象。
-2. 按 guide detector 建立 sim 像点到 `et_focalplane` detector 像点的映射。
-3. 从每个 batch 的首帧图像提取候选星。
-4. 候选星经 exact ET focal-plane adapter 转成 `ObservedStar`。
-5. 用 `query_detector_sources()` 为每个 detector 构造参考星。
-6. 统一做匹配和 QUEST 解算。
-7. 生成 `guide_error_audit`。
-8. 生成 `error_budget`，用于把 detector/preprocess/centroid/matching/attitude 项串成可追溯预算。
-
-依赖 `et_focalplane` 接口包括：
-
-- `load_registry`
-- `Transformer`
-- `GaiaCatalog`
-- `GaiaSourceFilter`
-- `query_detector_sources`
-
-### 7.2 `run_guide_first_frame_truth_noise`
-
-- 不从图像提取候选星；
-- 先取 truth detector 像点；
-- 在 detector 像素平面注入高斯噪声；
-- 再进入统一的几何转换、匹配和姿态解算。
-
-## 8. 配置
-
-### 8.1 通用链路
-
- [configs/base.yaml](/home/cxgao/ET/FSG/fsglib/configs/base.yaml:1)。
-
-- `project`
-- `dataset`
-- `preprocess`
-- `extract`
-- `match`
-- `tracking`
-- `ephemeris`
-- `attitude`
-- `evaluation`
-- `logging`
-
-### 8.2 附加配置
-
-`run_guide_first_frame_init` ：
-
-- [configs/guide_v1_noise_psf_etcoord.yaml](/home/cxgao/ET/FSG/fsglib/configs/guide_v1_noise_psf_etcoord.yaml:1)
-
-`run_guide_first_frame_truth_noise` ：
-
-- [configs/guide_truth_noise_0065pix_exact_etcoord.yaml](/home/cxgao/ET/FSG/fsglib/configs/guide_truth_noise_0065pix_exact_etcoord.yaml:1)
-- 当前主链路
-
-PR21 的本地烟测入口：
+## 10. 常用 examples
 
 ```bash
+python examples/run_guide_first_frame.py
+python examples/run_microlens_guide_first_frame.py
+python examples/run_guide_first_frame_truth_noise.py
+python examples/run_guide_first_frame_truth_noise_exact.py
+python examples/run_transit_full_truth_noise_exact_parallel.py
 python examples/run_pr21_error_budget_smoke.py
+python examples/run_single_frame.py
 ```
 
-该脚本默认使用 `truth_noise_exact` 小规模 smoke，并在进程内限制内存、
-CPU 时间和 BLAS 线程，防止本地 Gaia/et_focalplane 查询异常扩大导致工作站
-卡死。可通过 `FSGLIB_SMOKE_MAX_MEMORY_GB`、
-`FSGLIB_SMOKE_MEMORY_FRACTION`、`FSGLIB_SMOKE_RESERVE_MEMORY_GB`、
-`FSGLIB_SMOKE_MAX_CPU_SECONDS`、`FSGLIB_SMOKE_MAX_OBS_PER_DETECTOR`、
-`FSGLIB_SMOKE_REFERENCE_TOPK_PER_DETECTOR`、`FSGLIB_SMOKE_CATALOG_G_MAG_MAX`
-调整上限。未显式设置 `FSGLIB_SMOKE_MAX_MEMORY_GB` 时，脚本会按当前
-`MemAvailable` 扣除保留内存后取一个比例作为上限，避免无上限增持。若需要真实图像烟测，可显式设置
-`FSGLIB_PR21_SMOKE_MODE=real_image_no_calib`；该模式会关闭默认 2049 假校准资产，
-因为 legacy 仿真图是 1947 像素。
+## 11. Debug 输出
 
-## 9. 结果调试
+`project.save_debug=true` 时，`save_debug_bundle()` 会在
+`project.output_dir` 下生成 debug bundle。guide-specific examples 还会写出：
 
-### 9.1 `FrameResult`
+- top-level result/audit/error-budget JSON；
+- matching records；
+- geometry metadata；
+- config snapshots；
+- detector-level debug records；
+- matching overlays。
 
-结构是 `FrameResult`。
-
-字段：
-
-- `raw`
-- `preprocessed`
-- `candidates`
-- `observed`
-- `reference`
-- `matching`
-- `solution`
-- `evaluation`
-- `meta`
-
-### 9.2 首帧返回值
-
-首帧返回 `dict`
-
-### 9.3 Debug bundle
-
- `project.save_debug=true`，`save_debug_bundle()` 在 `project.output_dir` 下生成调试文件：
-
-- `truth_stars.json`
-- `reference_stars.json`
-- `candidates.json`
-- `matches.json`
-- `solution.json`
-- `analysis.json`
-- `centroid_step_audit.json`
-- `validation/error_budget.json`
-- `validation/error_budget_terms.csv`
+具体文件布局见 `docs/README_debug.md`。

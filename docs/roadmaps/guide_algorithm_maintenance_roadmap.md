@@ -6,7 +6,7 @@ Source planning note: the local Chinese DOCX roadmap under `plan/` (planning mat
 
 Date: 2026-05-11
 
-Status snapshot updated: 2026-05-18
+Status snapshot updated: 2026-05-27
 
 Goal: move ET-fsglib from an algorithm validation and workflow test library toward an auditable, regressible, and extensible high-precision guide-star algorithm chain.
 
@@ -37,7 +37,7 @@ The guide-star error chain crosses module boundaries. Preprocessing noise affect
 
 ## Current Status Snapshot
 
-Status checked against merged PRs and open issues on 2026-05-18.
+Status checked against merged PRs and open issues on 2026-05-27.
 
 | Roadmap PR | Status | Evidence and remaining work |
 | --- | --- | --- |
@@ -54,15 +54,15 @@ Status checked against merged PRs and open issues on 2026-05-18.
 | PR10 | Completed with follow-ups | Merged as GitHub PR #85. Real detector noise assets and flat-field uncertainty remain #83/#84. |
 | PR11 | Completed with follow-up | Merged as GitHub PR #88. Future unmasked cosmic-ray detection remains #87. |
 | PR12 | Completed | Merged as GitHub PR #86. |
-| PR13 | Next recommended PR | Open issues #38, #39, and #40; blocks PR19. |
+| PR13 | Partially completed | Merged GitHub PR #90 for centroid covariance propagation. Follow-ups remain for PSF-template fitting (#89/#38) and catalog-aware deblending (#40). |
 | PR14 | Completed | Merged as GitHub PR #72. |
 | PR15 | Completed with follow-up | Merged as GitHub PR #74. Broader multi-detector validation remains #57/PR22. |
 | PR16 | Pending | Open issue #43. |
 | PR17 | Completed | Merged as GitHub PR #77. |
 | PR18 | Completed | Merged as GitHub PR #81 for the generic HEALPix provider/cache/provenance path. |
-| PR19 | Pending, blocked by PR13 | Open issues #47, #62, and PR13-linked #39/#31. |
-| PR20 | Pending | Open issue #48. Ambiguity issue #63 is already closed by PR4 work. |
-| PR21 | Pending | Open issue #50. |
+| PR19 | Partially completed | Merged GitHub PR #92 for attitude covariance quality metrics and closed #62. Covariance-weighted Wahba/QUEST remains open in #47, and covariance-derived gates remain #31. |
+| PR20 | Completed | Merged GitHub PR #94 and closed #48. Additional robust-solver evaluation is tracked separately in #91/#93. |
+| PR21 | Completed with follow-ups | Merged GitHub PR #98 and closed #50. Error-budget prior/dashboard follow-ups remain #95/#96/#97. |
 | PR22 | Pending | Open issues #51, #52, #53, #57, and #65. |
 | PR23 | Partially covered, not complete | Local-pyramid timing/cache work exists from PR3/#73; full stage profiler and CI budgets remain #54. |
 | PR24 | Partially covered, not complete | Incremental docs/debug work exists, but YAML audit, typed config, structured artifacts, logging policy, and design docs remain #69/#55/#58/#59/#60. |
@@ -101,19 +101,19 @@ Backlog issues:
 | #35 | PRE: Add cosmic-ray, hot-pixel, and transient artifact rejection | PR11 |
 | #36 | EXT: Implement hysteresis segmentation using grow_threshold_sigma | PR12 |
 | #37 | EXT: Compute and enforce PSF shape metrics, ellipticity, FWHM, and sharpness | PR12 |
-| #38 | EXT: Add PSF-fit or maximum-likelihood centroid with covariance output | PR13 |
-| #39 | EXT: Propagate centroid covariance to ObservedStar LOS covariance and match weights | PR13 / PR19 |
-| #40 | EXT: Add catalog-aware deblending for close or partially overlapping stars | PR13 |
+| #38 | EXT: Add PSF-fit or maximum-likelihood centroid with covariance output | PR13 follow-up |
+| #39 | EXT: Propagate centroid covariance to ObservedStar LOS covariance and match weights | Completed by PR13/#90 |
+| #40 | EXT: Add catalog-aware deblending for close or partially overlapping stars | PR13 follow-up |
 | #41 | OPT: Formalize camera-frame conventions and round-trip projection tests for every detector | PR14 |
 | #42 | OPT: Replace body_model_proxy with calibrated exact focal-plane adapter for production | PR15 |
 | #43 | OPT: Add rolling-shutter and exposure-midpoint timing correction | PR16 |
 | #44 | EPH: Apply Gaia proper motion, parallax, radial velocity, and epoch propagation | PR17 |
 | #45 | EPH: Use ET/Kepler bandpass magnitude and flux-derived weights consistently | PR17 |
 | #46 | EPH: Cache Gaia HEALPix partitions and catalog region queries | PR18 |
-| #47 | ATT: Use covariance-weighted Wahba/QUEST instead of SNR-only weights | PR19 |
-| #48 | ATT: Replace single-pass outlier rejection with robust iterative validation | PR20 |
-| #49 | ATT: Add golden quaternion/DCM convention tests and documentation | PR14 / PR19 |
-| #50 | VAL: Add full error-budget ledger from detector noise to attitude error | PR21 |
+| #47 | ATT: Use covariance-weighted Wahba/QUEST instead of SNR-only weights | PR19 follow-up |
+| #48 | ATT: Replace single-pass outlier rejection with robust iterative validation | Completed by PR20/#94 |
+| #49 | ATT: Add golden quaternion/DCM convention tests and documentation | Completed by PR14/PR19 |
+| #50 | VAL: Add full error-budget ledger from detector noise to attitude error | Completed by PR21/#98 |
 | #51 | VAL: Add Monte Carlo regression suite across SNR, PSF, background, attitude prior, and artifacts | PR22 |
 | #52 | VAL: Implement TE/HSFE/LSFE-style validation scenarios for ET guide requirements | PR22 |
 | #53 | VAL: Strengthen catalog-ID truth verification and false-match metrics | PR22 |
@@ -125,9 +125,9 @@ Backlog issues:
 | #59 | QA: Replace print/silent catalog errors with structured logging and failure policy | PR24 |
 | #60 | DOC: Add algorithm-chain design document mapped to star-sensor textbook chapters | PR24 |
 | #61 | EXT: Add saturation, nonlinearity, residual-image, and crosstalk guards | PR11 |
-| #62 | ATT: Estimate attitude covariance and expose guide-control quality metrics | PR19 |
-| #63 | MATCH: Add ambiguity detection for repeated local geometry and close catalog neighbors | PR4 / PR20 |
-| #64 | MATCH: Add magnitude/SNR consistency check in matching validation | PR4 |
+| #62 | ATT: Estimate attitude covariance and expose guide-control quality metrics | Completed by PR19/#92 |
+| #63 | MATCH: Add ambiguity detection for repeated local geometry and close catalog neighbors | Completed by PR4 |
+| #64 | MATCH: Add magnitude/SNR consistency check in matching validation | Completed by PR4 |
 | #65 | VAL: Add adversarial tests for prior-attitude errors and reacquire thresholds | PR22 |
 
 ## Dependency Path
@@ -494,7 +494,7 @@ Acceptance:
 - Elongated, trailed, and cosmic-ray-like sources are classified by shape filters.
 - Centroid bias decreases on synthetic PSF fixtures.
 
-### PR13. extract: add precision centroiding with covariance and deblending (next recommended PR)
+### PR13. extract: add precision centroiding with covariance and deblending (partially completed: GitHub PR #90; follow-ups remain)
 
 | Field | Value |
 | --- | --- |
@@ -650,7 +650,7 @@ Acceptance:
 - Catalog provenance is fully traceable in outputs.
 - Missing partitions produce structured warnings or errors.
 
-### PR19. attitude: implement covariance-weighted Wahba/QUEST and attitude covariance
+### PR19. attitude: implement covariance-weighted Wahba/QUEST and attitude covariance (partially completed: GitHub PR #92)
 
 | Field | Value |
 | --- | --- |
@@ -676,7 +676,7 @@ Acceptance:
 - Monte Carlo attitude scatter is comparable to predicted covariance.
 - Existing attitude tests do not regress.
 
-### PR20. attitude: robust iterative outlier and false-match rejection
+### PR20. attitude: robust iterative outlier and false-match rejection (completed: GitHub PR #94)
 
 | Field | Value |
 | --- | --- |
@@ -703,7 +703,7 @@ Acceptance:
 - Multiple wrong matches produce invalid rather than confidently wrong attitude.
 - Debug explains every rejection.
 
-### PR21. validation: add detector-to-attitude error-budget ledger
+### PR21. validation: add detector-to-attitude error-budget ledger (completed: GitHub PR #98; follow-ups remain)
 
 | Field | Value |
 | --- | --- |
