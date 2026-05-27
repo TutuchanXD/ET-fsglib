@@ -2,12 +2,16 @@
 
 ## Status
 
-This document records the agreed design for replacing the obsolete triangle-index matching path with a local pyramid matcher. The first implementation now follows this plan on the same feature branch.
+This document is the historical design record for replacing the obsolete
+triangle-index matching path with a local pyramid matcher. The implementation
+is now in `fsglib.match.pyramid` and is selected through `match.algorithm`;
+current configuration semantics live in `docs/yaml_configuration_reference.md`.
 
-Local cleanup already agreed for this branch:
+Local cleanup captured by this design:
 
 - The ignored local `data/catalogs/` directory is obsolete and has no retention value.
-- The old triangle matcher and GSC builder remain in the repository for now, but should be marked deprecated in the implementation phase and removed only after the local pyramid path is validated.
+- The old triangle matcher and GSC builder remain in the repository only as
+  deprecated compatibility paths.
 
 ## Problem Statement
 
