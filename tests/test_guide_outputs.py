@@ -327,6 +327,8 @@ def test_run_guide_first_frame_init_debug_context_is_opt_in(tmp_path, monkeypatc
             "preprocessed": SimpleNamespace(image=np.ones((2, 2))),
             "frame_path": str(tmp_path / "frame.npz"),
             "batch_path": str(tmp_path / "batch0"),
+            "all_candidates": [SimpleNamespace(source_id=1)],
+            "selected_candidates": [SimpleNamespace(source_id=1)],
             "num_candidates_raw": 1,
             "num_candidates_selected": 1,
         }
@@ -396,6 +398,10 @@ def test_run_guide_first_frame_init_debug_context_is_opt_in(tmp_path, monkeypatc
     assert "geometry_model" not in default_result
     assert default_result["geometry_adapter"]["mode"] == "exact_et_focalplane"
     assert debug_result["debug_context"]["observed_stars"] is observed
+    assert debug_result["debug_context"]["detectors"]["detA"]["all_candidates"] == detector_contexts["detA"]["all_candidates"]
+    assert debug_result["debug_context"]["detectors"]["detA"]["selected_candidates"] == detector_contexts["detA"]["selected_candidates"]
+    assert debug_result["debug_context"]["detectors"]["detA"]["raw"] is detector_contexts["detA"]["raw"]
+    assert debug_result["debug_context"]["detectors"]["detA"]["preprocessed"] is detector_contexts["detA"]["preprocessed"]
 
 
 def test_build_observed_stars_passes_loaded_calibration_to_preprocess(tmp_path, monkeypatch):
@@ -632,6 +638,17 @@ def test_run_guide_first_frame_truth_noise_uses_adapter_output_only(tmp_path, mo
             "num_candidates_selected": 1,
         }
     }
+    detector_contexts = {
+        "detA": {
+            "raw": SimpleNamespace(image=np.ones((2, 2))),
+            "frame_path": str(tmp_path / "frame.npz"),
+            "batch_path": str(tmp_path / "batch0"),
+            "all_candidates": [SimpleNamespace(source_id=1)],
+            "selected_candidates": [SimpleNamespace(source_id=1)],
+            "num_candidates_raw": 1,
+            "num_candidates_selected": 1,
+        }
+    }
     reference_stats = {
         "detA": {
             "num_reference_stars": 1,
@@ -678,7 +695,7 @@ def test_run_guide_first_frame_truth_noise_uses_adapter_output_only(tmp_path, mo
     monkeypatch.setattr(
         run_guide_truth_noise,
         "_build_truth_noise_observed",
-        lambda *_args: (observed, detector_stats.copy(), {"detA": {}}),
+        lambda *_args: (observed, detector_stats.copy(), detector_contexts),
     )
     monkeypatch.setattr(run_guide_truth_noise, "_build_reference_stars", lambda *_args: (reference, reference_stats))
     monkeypatch.setattr(run_guide_truth_noise, "match_stars", lambda *_args: matching)
@@ -699,7 +716,12 @@ def test_run_guide_first_frame_truth_noise_uses_adapter_output_only(tmp_path, mo
     monkeypatch.setattr(run_guide_truth_noise, "compute_guide_error_audit", lambda *_args: {"enabled": False})
 
     result = run_guide_truth_noise.run_guide_first_frame_truth_noise(cfg)
+    debug_result = run_guide_truth_noise.run_guide_first_frame_truth_noise(cfg, include_debug_context=True)
 
     assert "body_model" not in result
     assert "geometry_model" not in result
+    assert "debug_context" not in result
     assert result["geometry_adapter"]["mode"] == "exact_et_focalplane"
+    assert debug_result["debug_context"]["observed_stars"] is observed
+    assert debug_result["debug_context"]["reference_stars"] is reference
+    assert debug_result["debug_context"]["detectors"]["detA"]["all_candidates"] == detector_contexts["detA"]["all_candidates"]
