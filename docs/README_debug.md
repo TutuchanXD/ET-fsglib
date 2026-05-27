@@ -37,20 +37,33 @@ truth-noise exact 和 full parallel examples 会把每一帧写到独立输出�
 
 ## 3. Debug bundle 文件
 
-`save_debug_bundle()` 或 full-bundle examples 可能写出以下文件。实际存在与否
-取决于入口、配置和是否有相应中间数据。
+`save_debug_bundle()` 或 full-bundle examples 可能写出以下文件，但两类
+bundle 的数组命名不同。实际存在与否取决于入口、配置和是否有相应中间数据。
 
-### 图像与候选星
+### `save_debug_bundle()` 图像与候选星
 
 - `raw.npy`: 原始图像数组。
 - `preprocessed.npy`: 预处理后的图像数组。
-- `background.npy`: 背景估计图或标量展开。
 - `noise_map.npy`: 噪声图。
-- `variance_map.npy`: 方差图。
-- `valid_mask.npy`: 有效像素 mask。
+- `artifact_mask_<name>.npy`: 可选 artifact mask，例如 saturation guard。
 - `truth_stars.json`: truth 星表，已转换到像素坐标。
 - `candidates.json`: 提取候选星。
 - `centroid_step_audit.json`: 可选 centroid step audit。
+
+### Full-bundle per-detector 图像数组
+
+truth-noise exact 和 full transit examples 在 `detectors/<detector_id>/`
+下写 per-detector 数组：
+
+- `raw_image.npy`: detector 原始图像。
+- `preprocessed_image.npy`: 预处理后图像。
+- `preprocessed_valid_mask.npy`: 有效像素 mask。
+- `preprocessed_background.npy`: 背景估计图，只有背景为数组时写出；
+  标量背景记录在 `preprocessed_meta.json`。
+- `preprocessed_noise_map.npy`: 噪声图，只有该值为数组时写出。
+- `preprocessed_variance_map.npy`: 方差图，只有该值为数组时写出。
+- `artifact_masks/<name>.npy`: per-detector artifact masks。
+- `preprocessed_meta.json`: preprocess metadata 和数组路径索引。
 
 ### 参考星与匹配
 

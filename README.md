@@ -48,7 +48,6 @@ geometry, matching, and QUEST behavior from image-level centroid errors.
 - `examples/`: executable guide, truth-noise, smoke, and generic demos.
 - `docs/`: maintained API, debug, frame-convention, configuration, and roadmap
   documents.
-- `data/`: small local catalog/index fixtures tracked for tests and examples.
 - `tests/`: unit tests for extraction, calibration, matching, attitude,
   tracking, audits, and configuration behavior.
 - `requirements.txt`: lightweight local runtime/test dependencies.
@@ -300,7 +299,9 @@ python -m fsglib.tools.build_lis_index \
   --isolation-radius-arcsec 0.0
 ```
 
-Small tracked fixtures are available in `data/guide_catalog/` and `data/index/`.
+LIS indexes and guide catalog snapshots are local data products. The repository
+ignores `data/`, so create or mount these products outside tracked source, then
+pass them to runtime code through `models["lis_index"]` or local configuration.
 
 ## External Data Dependencies
 
